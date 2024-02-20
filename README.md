@@ -39,10 +39,9 @@ The project relies on several Python libraries for its implementation:
 
 The repository includes several Python scripts, each corresponding to a step in the project:
 
-- `step1.py`: Ground filtering and DTM creation with Laplace interpolation.
-- `step2.py`: DTM creation with Ordinary Kriging.
-- `step3.py`: Analysis script for comparing the DTMs.
+- `step1.py`: Ground filtering and DTM creation with Laplace interpolation. DTM creation with Ordinary Kriging.
 - `step4.py`: Visualization script for generating iso-contours.
+- `main.py`: Running the code.
 
 To run a script, use the following command structure (example for `step1.py`):
 
