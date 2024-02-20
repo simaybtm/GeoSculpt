@@ -243,7 +243,13 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
 
     return dtm
 
-## Main function
+### Step 2: Create DTM with Ordinary Kriging
+## Function to create a continuous DTM using Ordinary Kriging (ok)
+def ok_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
+    #TODO:
+
+
+### Main function
 def main():
     # Use parsed arguments directly
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}\n")
