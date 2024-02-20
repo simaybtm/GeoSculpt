@@ -4,7 +4,7 @@
 
 import numpy as np
 import startinpy as st
-import pyinterpolate as pi
+from pyinterpolate import build_experimental_variogram, build_theoretical_variogram, kriging, prepare_kriging_data
 import rasterio
 import scipy
 import laspy
@@ -243,24 +243,90 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
 
     return dtm
 
-### Step 2: Create DTM with Ordinary Kriging
-## Function to create a continuous DTM using Ordinary Kriging (ok)
-def ok_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
-    #TODO:
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+def visualize_dtm(dtm, x_range, y_range):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
 
-### Main function
+    X, Y = np.meshgrid(x_range, y_range)
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.gca(projection='3d')
+    surf = ax.plot_surface(X, Y, dtm, cmap='terrain', linewidth=0, antialiased=False)
+    plt.title('Digital Terrain Model (DTM) Interpolated with Ordinary Kriging')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    ax.set_zlabel('Elevation')
+    plt.colorbar(surf, shrink=0.5, aspect=5)
+    plt.show()
+
+def save_dtm_to_tiff(dtm, minx, maxx, miny, maxy, resolution):
+    import rasterio
+    from rasterio.transform import from_origin
+
+    # Define the raster's metadata
+    transform = from_origin(minx, maxy, resolution, resolution)
+    nrows, ncols = dtm.shape
+    with rasterio.open(
+        'dtm_ordinary_kriging.tiff', 'w', driver='GTiff',
+        height=nrows, width=ncols,
+        count=1, dtype=dtm.dtype,
+        crs='EPSG:4326',  # or another coordinate reference system
+        transform=transform
+    ) as dst:
+        dst.write(dtm, 1)
+
+    print("DTM saved as dtm_ordinary_kriging.tiff")
+
+def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
+    print("Creating DTM with Ordinary Kriging interpolation...")
+    
+    '''
+    Perform OK on the ground.laz created in the step above, and create a 0.5mX0.5m DTM.
+    For this step, you should use Pyinterpolate and document in the report the steps you took 
+    and show the results of the intermediate steps (eg the experimental variogram and the nugget/range/sill/function you used).
+    For this step, the parameters you find by modelling the dataset can be hardcoded, but these should be 
+    documented in the report and you still have to submit the code you code (which is only for this dataset).  
+    
+    '''
+    # Convert ground points numpy array to list of [x, y, value] for pyinterpolate
+    point_data = ground_points.tolist()
+
+    # Set parameters for variogram analysis
+    search_radius = resolution * 5  # Example: 5 times the resolution of your DTM
+    max_range = (maxx - minx) / 2  # Example: half the width of your study area
+
+    # 1. Build experimental variogram
+    experimental_semivariogram = build_experimental_variogram(input_array=point_data, step_size=search_radius, max_range=max_range)
+
+    # 2. Fit theoretical variogram model (spherical model used as example)
+    semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram, model_type='spherical', sill=400, rang=20000, nugget=0)
+
+    # 3. Perform Ordinary Kriging
+    # Prepare a grid of unknown points
+    x_range = np.arange(minx, maxx, resolution)
+    y_range = np.arange(miny, maxy, resolution)
+    X, Y = np.meshgrid(x_range, y_range)
+    unknown_points = np.vstack([X.ravel(), Y.ravel()]).T
+
+    # Convert unknown points to list of (x, y) tuples
+    unknown_points_list = unknown_points.tolist()
+
+    # Perform kriging
+    predictions = kriging(observations=point_data, theoretical_model=semivar, points=unknown_points_list, how='ok', no_neighbors=32)
+
+    # 4. Reshape predicted values back into grid shape for DTM
+    predicted_values = np.array([pred[0] for pred in predictions])  # Extracting predicted values
+    dtm = predicted_values.reshape(X.shape)
+
+    # 5. Visualize the DTM (optional)
+    visualize_dtm(dtm, x_range, y_range)
+
+    # 6. Save the DTM to a TIFF file (optional)
+    save_dtm_to_tiff(dtm, minx, maxx, miny, maxy, resolution)
+
+    return dtm
+
+
+## Main function
 def main():
     # Use parsed arguments directly
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}\n")
