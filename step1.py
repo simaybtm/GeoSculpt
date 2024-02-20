@@ -170,35 +170,109 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon):
     '''
 
     return np.array(ground_points), np.array(non_ground_points)
+
+# Function to create ground.laz file
+def save_ground_points_las(ground_points, filename="ground.laz"):
+    print("Saving ground points to LAS file...")
+    if ground_points.size > 0:
+        # Create a new LAS file with laspy
+        header = laspy.LasHeader(version="1.4", point_format=2)
+        las = laspy.LasData(header)
+
+        # Assign ground points to the LAS file
+        las.x = ground_points[:, 0]
+        las.y = ground_points[:, 1]
+        las.z = ground_points[:, 2]
+
+        # Write the LAS file to disk
+        las.write(filename)
+        print(f">> Ground points saved as {filename}.\n")
+    else:
+        print("No ground points found after CSF classification.")
+
+## Function to check if Laplace interpolation is working correctly (visualize with matplotlib)
+def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
+    # Generate the X and Y coordinates for the meshgrid
+    x_range = np.arange(minx, maxx, resolution)
+    y_range = np.arange(miny, maxy, resolution)
+    X, Y = np.meshgrid(x_range, y_range[:dtm.shape[0]])
+
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot the surface
+    surf = ax.plot_surface(X, Y, dtm, cmap='terrain', edgecolor='none')
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+    ax.set_title('Digital Terrain Model')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show()
     
 ## Function to create a continuous DTM using Laplace interpolation
-#TODO
+def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
+    print("Creating DTM with simplified Laplace interpolation...")
 
+    # Create a grid covering the extents of the ground points with the specified resolution
+    x_range = np.arange(minx, maxx, resolution)
+    y_range = np.arange(miny, maxy, resolution)
+    dtm = np.full((len(y_range), len(x_range)), np.nan)  # Initialize DTM with NaNs
 
+    # Populate the grid with Z-values from ground points
+    for point in ground_points:
+        x_idx = np.searchsorted(x_range, point[0]) - 1
+        y_idx = np.searchsorted(y_range, point[1]) - 1
+        if 0 <= x_idx < len(x_range) and 0 <= y_idx < len(y_range):
+            dtm[y_idx, x_idx] = point[2]  # Assign Z-value to the closest grid point
+
+    # Perform a simple "smoothing" by averaging non-NaN neighbors
+    for i in range(1, dtm.shape[0] - 1):
+        for j in range(1, dtm.shape[1] - 1):
+            if np.isnan(dtm[i, j]):
+                neighbors = dtm[i-1:i+2, j-1:j+2]
+                dtm[i, j] = np.nanmean(neighbors)  # Mean of non-NaN neighbors
+
+    # TODO: Handle edge cases and improve interpolation quality
+
+    # Save DTM to a TIFF file
+    with rasterio.open('dtm.tiff', 'w', driver='GTiff', height=dtm.shape[0], width=dtm.shape[1], count=1, dtype=str(dtm.dtype), crs='EPSG:32633', transform=rasterio.transform.from_origin(minx, maxy, resolution, resolution)) as dst:
+        dst.write(dtm, 1)
+    print("DTM saved as dtm.tiff")
+
+    visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+
+    return dtm
 
 ## Main function
 def main():
     # Use parsed arguments directly
-    print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}")
+    print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}\n")
    
-    # Processing pipeline
+    # Processing pipeline for Step 1
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
     if pointcloud is None or pointcloud.size == 0:
         print("No points found within the specified bounding box.")
         return
     if pointcloud is not None:
-        print("Point cloud read successfully.")
+        print(">> Point cloud read successfully.\n")
         thinned_pc = thin_pc(pointcloud)
-        print("Point cloud thinned.")
+        print(">> Point cloud thinned.\n")
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
-        print ("Ground points classified with CSF algorithm.")
+        print (">> Ground points classified with CSF algorithm.\n")
+        # Save the ground points in a file called ground.laz
+        save_ground_points_las(ground_points)
+        print(">> Ground points saved to ground.laz.\n")
+        dtm = laplace_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
+        print(">> Laplace interpolation complete.\n")
+        # if DTM is saved, print message
+        if dtm is not None:
+            print(">> DTM saved to output file location.\n")
         
-        # TODO: Implement ground filtering and save ground points as ground.laz
-        # TODO: Implement Laplace interpolation with thinned_pc and save DTM as dtm.tiff
-        #ground_points = ground_filter_tin(thinned_pc, resolution, d_max, alpha_max)
-        #save_ground_points_to_las(ground_points, output_file_path)
-
-        print("Step 1 complete.")   
+        print("\nStep 1 complete!\n\n")   
+    
+    # Continue to Step 2    
+    print ("Inializing Step 2...")
+    
         
 
 if __name__ == "__main__":
