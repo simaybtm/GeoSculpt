@@ -4,8 +4,9 @@
 
 import numpy as np
 import startinpy as st
-from pyinterpolate import build_experimental_variogram, build_theoretical_variogram, kriging, prepare_kriging_data
+import pyinterpolate
 import rasterio
+from rasterio.transform import from_origin
 import scipy
 import laspy
 import fiona
@@ -171,7 +172,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon):
 
     return np.array(ground_points), np.array(non_ground_points)
 
-# Function to create ground.laz file
+## Function to create ground.laz file
 def save_ground_points_las(ground_points, filename="ground.laz"):
     print("Saving ground points to LAS file...")
     if ground_points.size > 0:
@@ -241,12 +242,10 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
 
     visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
 
-    return dtm
+    return dtm 
 
-def visualize_dtm(dtm, x_range, y_range):
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
-
+## Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
+def visualize_ok(dtm, x_range, y_range):
     X, Y = np.meshgrid(x_range, y_range)
     fig = plt.figure(figsize=(10, 7))
     ax = fig.gca(projection='3d')
@@ -257,25 +256,8 @@ def visualize_dtm(dtm, x_range, y_range):
     ax.set_zlabel('Elevation')
     plt.colorbar(surf, shrink=0.5, aspect=5)
     plt.show()
-
-def save_dtm_to_tiff(dtm, minx, maxx, miny, maxy, resolution):
-    import rasterio
-    from rasterio.transform import from_origin
-
-    # Define the raster's metadata
-    transform = from_origin(minx, maxy, resolution, resolution)
-    nrows, ncols = dtm.shape
-    with rasterio.open(
-        'dtm_ordinary_kriging.tiff', 'w', driver='GTiff',
-        height=nrows, width=ncols,
-        count=1, dtype=dtm.dtype,
-        crs='EPSG:4326',  # or another coordinate reference system
-        transform=transform
-    ) as dst:
-        dst.write(dtm, 1)
-
-    print("DTM saved as dtm_ordinary_kriging.tiff")
-
+    
+## Function to create a continuous DTM using Ordinary Kriging
 def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
     print("Creating DTM with Ordinary Kriging interpolation...")
     
@@ -318,13 +300,24 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     dtm = predicted_values.reshape(X.shape)
 
     # 5. Visualize the DTM (optional)
-    visualize_dtm(dtm, x_range, y_range)
+    visualize_ok(dtm, x_range, y_range)
 
     # 6. Save the DTM to a TIFF file (optional)
-    save_dtm_to_tiff(dtm, minx, maxx, miny, maxy, resolution)
+    # Define the raster's metadata
+    transform = from_origin(minx, maxy, resolution, resolution)
+    nrows, ncols = dtm.shape
+    with rasterio.open(
+        'dtm_ordinary_kriging.tiff', 'w', driver='GTiff',
+        height=nrows, width=ncols,
+        count=1, dtype=dtm.dtype,
+        crs='EPSG:4326',
+        transform=transform
+    ) as dst:
+        dst.write(dtm, 1)
 
+    print("DTM saved as dtm_ordinary_kriging.tiff")
+    
     return dtm
-
 
 ## Main function
 def main():
@@ -355,8 +348,8 @@ def main():
     
     # Continue to Step 2    
     print ("Inializing Step 2...")
-    
-        
+    ordinary_kriging_interpolation (ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
+    print(">> Ordinary Kriging interpolation complete.\n")
 
 if __name__ == "__main__":
     main()
