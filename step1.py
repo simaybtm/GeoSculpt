@@ -247,7 +247,18 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
 ## Function to create a continuous DTM using Ordinary Kriging (ok)
 def ok_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
     #TODO:
-
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 
 ### Main function
 def main():
