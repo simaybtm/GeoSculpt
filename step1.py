@@ -4,7 +4,7 @@
 
 import numpy as np
 import startinpy as st
-import pyinterpolate
+from pyinterpolate import build_experimental_variogram, build_theoretical_variogram, kriging
 import rasterio
 from rasterio.transform import from_origin
 import scipy
@@ -15,8 +15,9 @@ import argparse
 
 
 import math
-import matplotlib.pyplot as plt # testing CSV output
-from mpl_toolkits.mplot3d import Axes3D # testing CSV output
+import matplotlib.pyplot as plt # testing CSF output
+from mpl_toolkits.mplot3d import Axes3D # testing CSF output
+from tqdm import tqdm # Load bar
 
 '''
 INPUTS:
@@ -204,7 +205,7 @@ def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
     # Plot the surface
     surf = ax.plot_surface(X, Y, dtm, cmap='terrain', edgecolor='none')
     fig.colorbar(surf, shrink=0.5, aspect=5)
-    ax.set_title('Digital Terrain Model')
+    ax.set_title('DTM of Laplace')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
@@ -240,6 +241,7 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
         dst.write(dtm, 1)
     print("DTM saved as dtm.tiff")
 
+    # Testing
     visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
 
     return dtm 
@@ -282,6 +284,12 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     # 2. Fit theoretical variogram model (spherical model used as example)
     semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram, model_type='spherical', sill=400, rang=20000, nugget=0)
 
+    # Simulate progress for the kriging process
+    num_points = len(point_data)
+    with tqdm(total=num_points, desc="Performing Kriging") as pbar:
+        for _ in range(num_points):
+            pbar.update(1)  # Update the progress bar 
+            
     # 3. Perform Ordinary Kriging
     # Prepare a grid of unknown points
     x_range = np.arange(minx, maxx, resolution)
