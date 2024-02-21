@@ -15,8 +15,8 @@ import argparse
 
 
 import math
-import matplotlib.pyplot as plt # testing CSF output
-from mpl_toolkits.mplot3d import Axes3D # testing CSF output
+import matplotlib.pyplot as plt # testing output
+from mpl_toolkits.mplot3d import Axes3D # testing output
 from tqdm import tqdm # Load bar
 
 '''
@@ -48,17 +48,6 @@ parser.add_argument('csf_res', type=float, help='Resolution in meters for the CS
 parser.add_argument('epsilon', type=float, help='Threshold in meters to classify the ground')
 args = parser.parse_args()
 
-
-'''
-TODO
-You need to implement the Cloth Simulation Filter algorithm (CSF) as explained in the terrainbook.
-
-You need to classify the points as ground and use those to generate the DTM with Laplace interpolation. 
-You are not allowed to use startinpy’s interpolate() function, you need to implement it yourself 
-(but you can use startinpy triangulation and other functions).
-
-'''
-
 ### Step 1: Ground filtering + DTM creation with Laplace
 ## Read LAS file with laspy and filter points by bounds
 def read_las(file_path, min_x, max_x, min_y, max_y):
@@ -76,7 +65,7 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
 ## Function to thin the point cloud by half
 def thin_pc(pointcloud):
     print("Thinning the point cloud...")
-    thinned_pointcloud = pointcloud[::10] 
+    thinned_pointcloud = pointcloud[::10]  # every 10th point is selected
     print(f"Number of points after thinning: {thinned_pointcloud.shape[0]}")
     return thinned_pointcloud
 
@@ -188,7 +177,6 @@ def save_ground_points_las(ground_points, filename="ground.laz"):
 
         # Write the LAS file to disk
         las.write(filename)
-        print(f">> Ground points saved as {filename}.\n")
     else:
         print("No ground points found after CSF classification.")
 
@@ -242,88 +230,88 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
     print("DTM saved as dtm.tiff")
 
     # Testing
-    visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    #visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
 
     return dtm 
 
 ## Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
 def visualize_ok(dtm, x_range, y_range):
     X, Y = np.meshgrid(x_range, y_range)
+    
     fig = plt.figure(figsize=(10, 7))
-    ax = fig.gca(projection='3d')
+    ax = fig.add_subplot(111, projection='3d')  # Correct way to add 3D axes
     surf = ax.plot_surface(X, Y, dtm, cmap='terrain', linewidth=0, antialiased=False)
+    
     plt.title('Digital Terrain Model (DTM) Interpolated with Ordinary Kriging')
     plt.xlabel('X')
     plt.ylabel('Y')
     ax.set_zlabel('Elevation')
+    
     plt.colorbar(surf, shrink=0.5, aspect=5)
     plt.show()
     
 ## Function to create a continuous DTM using Ordinary Kriging
 def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
-    print("Creating DTM with Ordinary Kriging interpolation...")
+    print("Starting Ordinary Kriging interpolation...")
+
+    # Calculate variance of the dataset 
+    #variance = np.var(ground_points[:, 2])
+    #print(f"Variance of the dataset: {variance}")
+
+    # Prepare the data
+    point_data = np.array(ground_points)
+    # Thin further for experimental semivariogram
+    point_data = point_data[::10]
+
+    # Step 2: Calculate the experimental semivariogram
+    search_radius = resolution * 20
+    max_range = (maxx - minx) / 2
     
-    '''
-    Perform OK on the ground.laz created in the step above, and create a 0.5mX0.5m DTM.
-    For this step, you should use Pyinterpolate and document in the report the steps you took 
-    and show the results of the intermediate steps (eg the experimental variogram and the nugget/range/sill/function you used).
-    For this step, the parameters you find by modelling the dataset can be hardcoded, but these should be 
-    documented in the report and you still have to submit the code you code (which is only for this dataset).  
+    try: 
+        experimental_semivariogram = build_experimental_variogram(input_array=point_data,
+                                                                step_size=search_radius,
+                                                                max_range=max_range)
+        print("Experimental semivariogram calculated.")
+        print("EXPERIMENTAL\n",experimental_semivariogram)
+    except MemoryError as e:
+        print(f"MemoryError: {e}")
+        return None
+
+    # Step 3: Fit a theoretical semivariogram model
+    semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram,
+                                          model_name='linear', 
+                                          sill=30, # Units: meters 
+                                          rang=150, # Units: meters
+                                          nugget=0)  # Units: meters
+    print("\n\nTheoretical semivariogram model fitted.")
+    print("THEORETICAL\n",semivar)
     
-    '''
-    # Convert ground points numpy array to list of [x, y, value] for pyinterpolate
-    point_data = ground_points.tolist()
+    # Step 4: Perform Ordinary Kriging
+    x_coords = np.arange(minx, maxx + resolution, resolution)
+    y_coords = np.arange(miny, maxy + resolution, resolution)
+    grid_x, grid_y = np.meshgrid(x_coords, y_coords)
+    unknown_points = np.vstack([grid_x.ravel(), grid_y.ravel()]).T
 
-    # Set parameters for variogram analysis
-    search_radius = resolution * 5  # Example: 5 times the resolution of your DTM
-    max_range = (maxx - minx) / 2  # Example: half the width of your study area
+    # Predictions
+    predictions = kriging(observations=point_data, theoretical_model=semivar,
+                          points=unknown_points, how='ok', no_neighbors=32)
 
-    # 1. Build experimental variogram
-    experimental_semivariogram = build_experimental_variogram(input_array=point_data, step_size=search_radius, max_range=max_range)
+    # Reshape predictions to match the grid
+    predicted_values = np.array([pred[0] for pred in predictions])
+    dtm = predicted_values.reshape(grid_y.shape)
 
-    # 2. Fit theoretical variogram model (spherical model used as example)
-    semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram, model_type='spherical', sill=400, rang=20000, nugget=0)
-
-    # Simulate progress for the kriging process
-    num_points = len(point_data)
-    with tqdm(total=num_points, desc="Performing Kriging") as pbar:
-        for _ in range(num_points):
-            pbar.update(1)  # Update the progress bar 
-            
-    # 3. Perform Ordinary Kriging
-    # Prepare a grid of unknown points
-    x_range = np.arange(minx, maxx, resolution)
-    y_range = np.arange(miny, maxy, resolution)
-    X, Y = np.meshgrid(x_range, y_range)
-    unknown_points = np.vstack([X.ravel(), Y.ravel()]).T
-
-    # Convert unknown points to list of (x, y) tuples
-    unknown_points_list = unknown_points.tolist()
-
-    # Perform kriging
-    predictions = kriging(observations=point_data, theoretical_model=semivar, points=unknown_points_list, how='ok', no_neighbors=32)
-
-    # 4. Reshape predicted values back into grid shape for DTM
-    predicted_values = np.array([pred[0] for pred in predictions])  # Extracting predicted values
-    dtm = predicted_values.reshape(X.shape)
-
-    # 5. Visualize the DTM (optional)
-    visualize_ok(dtm, x_range, y_range)
-
-    # 6. Save the DTM to a TIFF file (optional)
-    # Define the raster's metadata
-    transform = from_origin(minx, maxy, resolution, resolution)
-    nrows, ncols = dtm.shape
-    with rasterio.open(
-        'dtm_ordinary_kriging.tiff', 'w', driver='GTiff',
-        height=nrows, width=ncols,
-        count=1, dtype=dtm.dtype,
-        crs='EPSG:4326',
-        transform=transform
-    ) as dst:
+    # Save the DTM to a TIFF file
+    transform = from_origin(minx, maxy, resolution, -resolution)
+    with rasterio.open('dtm_ordinary_kriging.tiff', 'w', driver='GTiff',
+                       height=dtm.shape[0], width=dtm.shape[1],
+                       count=1, dtype=str(dtm.dtype), crs='EPSG:4326',
+                       transform=transform) as dst:
         dst.write(dtm, 1)
 
     print("DTM saved as dtm_ordinary_kriging.tiff")
+    
+    # Visualize the DTM created with Ordinary Kriging
+    visualize_ok(dtm, x_coords, y_coords)
     
     return dtm
 
@@ -352,10 +340,10 @@ def main():
         if dtm is not None:
             print(">> DTM saved to output file location.\n")
         
-        print("\nStep 1 complete!\n\n")   
+        print("\nStep 1 completed!\n\n")   
     
     # Continue to Step 2    
-    print ("Inializing Step 2...")
+    print ("Inializing Step 2...\n")
     ordinary_kriging_interpolation (ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
     print(">> Ordinary Kriging interpolation complete.\n")
 
