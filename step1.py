@@ -109,6 +109,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
     iteration = 0
     while iteration < max_iterations:
         prev_z_grid = np.copy(z_grid)
+        max_change = 0
         for i in range(z_grid.shape[0]):
             for j in range(z_grid.shape[1]):
                 # Find the closest point in the inverted point cloud to each grid point
@@ -125,8 +126,17 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
                 valid_neighbors = [prev_z_grid[ni, nj] for ni, nj in neighbor_indices if 0 <= ni < z_grid.shape[0] and 0 <= nj < z_grid.shape[1]]
                 if valid_neighbors:
                     z_grid[i, j] = np.mean([z_grid[i, j]] + valid_neighbors)
-                print(f"z_grid[{i}, {j}] = {z_grid[i, j]}")
-            
+                
+                # Calculate change for this grid point and update max_change if necessary
+                change = np.abs(prev_z_grid[i, j] - z_grid[i, j])
+                max_change = max(max_change, change)
+
+                print(f"Iteration {iteration+1}: Max change = {max_change}")
+                iteration += 1
+
+                if max_change <= delta_z_threshold:
+                    print("Simulation has stabilized.")
+                    break
 
         # Check for convergence
         if np.max(np.abs(prev_z_grid - z_grid)) < delta_z_threshold:
