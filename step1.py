@@ -29,7 +29,7 @@ maxx	    maxx of the bbox for which we want to obtain the DTM
 maxy	    maxy of the bbox for which we want to obtain the DTM
 res	        DTM resolution in meters
 csf_res	    resolution in meters for the CSF grid to use
-epsilon	    threshold in meters to classify the ground
+epsilon	    used for classifying the points as ground if they are within "epsilon" distance of the cloth in its final position
 
 OUTPUTS:
 dtm.tiff    representing the 50cm-resolution DTM of the area created with Laplace
@@ -70,97 +70,122 @@ def thin_pc(pointcloud):
     return thinned_pointcloud
 
 ## Function to implement the Cloth Simulation Filter algorithm (CSF)
-def cloth_simulation_filter(pointcloud, csf_res, epsilon):
+def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, delta_z_threshold=0.01):
     print("Running Cloth Simulation Filter algorithm...")
-    
-    # Check if the point cloud is empty after filtering/thinning
+
     if pointcloud.size == 0:
-        print("Empty point cloud after filtering or thinning. Please check the bounding box coordinates and thinning process.")
+        print("Empty point cloud after filtering or thinning.")
         return np.array([]), np.array([])
-    
-    # Invert the point cloud (flip Z values)
+
     inverted_pointcloud = np.copy(pointcloud)
-    max_z = np.max(pointcloud[:, 2]) if pointcloud.size > 0 else 0
+    max_z = np.max(pointcloud[:, 2])
     inverted_pointcloud[:, 2] = max_z - pointcloud[:, 2]
+    # Check if inversion was successful
+    if np.array_equal(inverted_pointcloud, pointcloud):
+        print("Inversion failed. Aborting CSF.")
+        return np.array([]), np.array([])
+    else:
+        print("Inversion successful.") 
     
-    # Initialize cloth as a grid at a height above the highest point (z0)
-    ''' For simplicity, a grid covering the extents of the point cloud with resolution csf_res is created. 
-    This grid represents the cloth. The height of the cloth is set to be 10 units above the highest point in the point cloud.'''
-    x_min, x_max = np.min(pointcloud[:, 0]), np.max(pointcloud[:, 0])
+    # Initializing the cloth/grid
+    x_min, x_max = np.min(pointcloud[:, 0]), np.max(pointcloud[:, 0]) # Get the min and max x values to create the grid
     y_min, y_max = np.min(pointcloud[:, 1]), np.max(pointcloud[:, 1])
-    x_grid, y_grid = np.meshgrid(np.arange(x_min, x_max, csf_res), np.arange(y_min, y_max, csf_res))
-    z_grid = np.full(x_grid.shape, max_z + 10)  # Start the cloth 10 units above the highest point
+    x_grid, y_grid = np.meshgrid(np.arange(x_min, x_max, csf_res), np.arange(y_min, y_max, csf_res)) # Create the grid
+    z_grid = np.full(x_grid.shape, max_z + 10) # Initialize the grid with a value higher than the max z value
     
-    # Simplified simulation of the cloth falling process
-    # For each grid point, move it downwards until it is within epsilon of a point in the inverted cloud
-    for i in range(x_grid.shape[0]):
-        for j in range(x_grid.shape[1]):
-            cloth_point = np.array([x_grid[i, j], y_grid[i, j], z_grid[i, j]])
-            # Find the closest point below the cloth point
-            distances = np.sqrt(np.sum((inverted_pointcloud[:, :2] - cloth_point[:2])**2, axis=1))
-            closest_point_idx = np.argmin(distances)
-            closest_point_z = inverted_pointcloud[closest_point_idx, 2]
+    # Show "grid/cloth" points above the inverted point cloud
+    # fig = plt.figure(figsize=(15, 10))
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.scatter(inverted_pointcloud[:, 0], inverted_pointcloud[:, 1], inverted_pointcloud[:, 2], c='blue', label='Inverted Point Cloud', s=1)
+    # ax.scatter(x_grid, y_grid, z_grid, c='red', label='Grid Points', s=1)
+    # ax.set_title('Inverted Point Cloud and Grid/Cloth Points')
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # ax.set_zlabel('Z')
+    # ax.legend()
+    # plt.show()
+        
+    # Simulating the cloth falling process
+    iteration = 0
+    while iteration < max_iterations:
+        prev_z_grid = np.copy(z_grid)
+        for i in range(z_grid.shape[0]):
+            for j in range(z_grid.shape[1]):
+                # Find the closest point in the inverted point cloud to each grid point
+                dists = np.sqrt((inverted_pointcloud[:, 0] - x_grid[i, j])**2 + (inverted_pointcloud[:, 1] - y_grid[i, j])**2)
+                closest_point_idx = np.argmin(dists)
+                closest_point_z = inverted_pointcloud[closest_point_idx, 2]
 
-            # Move the cloth point down if it's above the closest point + epsilon
-            if cloth_point[2] > closest_point_z + epsilon:
-                z_grid[i, j] = closest_point_z + epsilon
+                # Update z_grid based on the closest point and epsilon
+                if closest_point_z + epsilon < z_grid[i, j]:
+                    z_grid[i, j] = closest_point_z + epsilon
 
-    # Convert the cloth grid back to match the original point cloud orientation
-    z_grid = max_z - z_grid
+                # Apply tension by averaging with neighbor grid points to simulate internal forces
+                neighbor_indices = [(i-1, j), (i+1, j), (i, j-1), (i, j+1)]
+                valid_neighbors = [prev_z_grid[ni, nj] for ni, nj in neighbor_indices if 0 <= ni < z_grid.shape[0] and 0 <= nj < z_grid.shape[1]]
+                if valid_neighbors:
+                    z_grid[i, j] = np.mean([z_grid[i, j]] + valid_neighbors)
+                print(f"z_grid[{i}, {j}] = {z_grid[i, j]}")
+            
 
-    # Classify points as ground or non-ground based on their distance to the cloth surface
+        # Check for convergence
+        if np.max(np.abs(prev_z_grid - z_grid)) < delta_z_threshold:
+            break
+        iteration += 1
+
+    # Classify points as ground or non-ground
     ground_points = []
     non_ground_points = []
     for point in pointcloud:
-        x_idx = np.argmin(np.abs(x_grid[0, :] - point[0]))
-        y_idx = np.argmin(np.abs(y_grid[:, 0] - point[1]))
-        if np.abs(z_grid[y_idx, x_idx] - point[2]) <= epsilon:
+        x, y, z = point
+        grid_x_idx = np.argmin(np.abs(x_grid[0, :] - x))
+        grid_y_idx = np.argmin(np.abs(y_grid[:, 0] - y))
+        if np.abs(z_grid[grid_y_idx, grid_x_idx] - z) <= epsilon:
             ground_points.append(point)
         else:
-            non_ground_points.append(point)
-            
-    '''      
-    # Test CSV output with matplotlib
-    # Convert lists to numpy arrays for easier handling
-    ground_points = np.array(ground_points)
-    non_ground_points = np.array(non_ground_points)
-    
-    # Visualization with matplotlib
-    fig = plt.figure(figsize=(20, 10))
-    
-    # Original Point Cloud
-    ax1 = fig.add_subplot(131, projection='3d')
-    ax1.scatter(pointcloud[:, 0], pointcloud[:, 1], pointcloud[:, 2], s=1, c='k')
-    ax1.set_title('Original Point Cloud')
-    ax1.set_xlabel('X')
-    ax1.set_ylabel('Y')
-    ax1.set_zlabel('Z')
+            non_ground_points.append(point)     
+        
+    # Show cloth points after the simulation
+    fig = plt.figure(figsize=(15, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(inverted_pointcloud[:, 0], inverted_pointcloud[:, 1], inverted_pointcloud[:, 2], c='blue', label='Inverted Point Cloud', s=1)
+    ax.scatter(x_grid, y_grid, z_grid, c='red', label='Grid Points', s=1)
+    ax.set_title('Inverted Point Cloud and Grid/Cloth Points')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    plt.show()           
 
-    # Ground Points
-    ax2 = fig.add_subplot(132, projection='3d')
-    if ground_points.size > 0:
-        ax2.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], s=1, c='g')
-    ax2.set_title('Ground Points')
-    ax2.set_xlabel('X')
-    ax2.set_ylabel('Y')
-    ax2.set_zlabel('Z')
-
-    # Non-Ground Points
-    ax3 = fig.add_subplot(133, projection='3d')
-    if non_ground_points.size > 0:
-        ax3.scatter(non_ground_points[:, 0], non_ground_points[:, 1], non_ground_points[:, 2], s=1, c='r')
-    ax3.set_title('Non-Ground Points')
-    ax3.set_xlabel('X')
-    ax3.set_ylabel('Y')
-    ax3.set_zlabel('Z')
-
-    plt.tight_layout()
-    plt.show()
-
-    return ground_points, non_ground_points
-    '''
 
     return np.array(ground_points), np.array(non_ground_points)
+
+## Function to visualize the separation between ground and non-ground points (testing)
+def test_ground_non_ground_separation(ground_points, non_ground_points):
+    """
+    Visualizes the separation between ground and non-ground points.
+    
+    Parameters:
+    - ground_points: np.array, points classified as ground.
+    - non_ground_points: np.array, points classified as non-ground.
+    """
+    
+    fig = plt.figure(figsize=(15, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    if len(ground_points) > 0:
+        ax.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
+    
+    if len(non_ground_points) > 0:
+        ax.scatter(non_ground_points[:, 0], non_ground_points[:, 1], non_ground_points[:, 2], c='red', label='Non-Ground Points', s=1)
+    
+    ax.set_title('Ground vs Non-Ground Points')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    
+    plt.show()
 
 ## Function to create ground.laz file
 def save_ground_points_las(ground_points, filename="ground.laz"):
@@ -308,7 +333,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
                        transform=transform) as dst:
         dst.write(dtm, 1)
 
-    print("DTM saved as dtm_ordinary_kriging.tiff")
+    print("\nDTM saved as dtm_ordinary_kriging.tiff")
     
     # Visualize the DTM created with Ordinary Kriging
     visualize_ok(dtm, x_coords, y_coords)
@@ -331,11 +356,15 @@ def main():
         print(">> Point cloud thinned.\n")
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
+        print("Starting testing of ground and non-ground points separation...")
+        test_ground_non_ground_separation(ground_points, non_ground_points)
+    '''
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
         dtm = laplace_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
         print(">> Laplace interpolation complete.\n")
+
         # if DTM is saved, print message
         if dtm is not None:
             print(">> DTM saved to output file location.\n")
@@ -346,6 +375,7 @@ def main():
     print ("Inializing Step 2...\n")
     ordinary_kriging_interpolation (ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
     print(">> Ordinary Kriging interpolation complete.\n")
+    '''
 
 if __name__ == "__main__":
     main()
