@@ -7,10 +7,11 @@ import startinpy as st
 from pyinterpolate import build_experimental_variogram, build_theoretical_variogram, kriging
 import rasterio
 from rasterio.transform import from_origin
-import scipy
+from scipy.spatial import cKDTree
+from scipy.ndimage import median_filter
+
 import laspy
-import fiona
-import shapely
+
 import argparse
 
 
@@ -69,6 +70,15 @@ def thin_pc(pointcloud):
     print(f"Number of points after thinning: {thinned_pointcloud.shape[0]}")
     return thinned_pointcloud
 
+# Function to get the valid neighbors of a grid point
+def get_valid_neighbors(i, j, z_grid):
+    neighbors = []
+    for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:  # Check the four direct neighbors (up, down, left, right)
+        ni, nj = i + di, j + dj
+        if 0 <= ni < z_grid.shape[0] and 0 <= nj < z_grid.shape[1]:  # Ensure the neighbor is within grid bounds
+            neighbors.append(z_grid[ni, nj])
+    return neighbors
+
 ## Function to implement the Cloth Simulation Filter algorithm (CSF)
 def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, delta_z_threshold=0.01):
     print("Running Cloth Simulation Filter algorithm...")
@@ -86,6 +96,9 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
         return np.array([]), np.array([])
     else:
         print("Inversion successful.") 
+        
+    # Use KDTree for efficient nearest neighbor search
+    kd_tree = cKDTree(inverted_pointcloud[:, :2])  # Using only X and Y
     
     # Initializing the cloth/grid
     x_min, x_max = np.min(pointcloud[:, 0]), np.max(pointcloud[:, 0]) # Get the min and max x values to create the grid
@@ -108,67 +121,72 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
     # Simulating the cloth falling process
     iteration = 0
     while iteration < max_iterations:
-        prev_z_grid = np.copy(z_grid)
         max_change = 0
         for i in range(z_grid.shape[0]):
             for j in range(z_grid.shape[1]):
-                # Find the closest point in the inverted point cloud to each grid point
-                dists = np.sqrt((inverted_pointcloud[:, 0] - x_grid[i, j])**2 + (inverted_pointcloud[:, 1] - y_grid[i, j])**2)
-                closest_point_idx = np.argmin(dists)
-                closest_point_z = inverted_pointcloud[closest_point_idx, 2]
+                dist, idx = kd_tree.query([x_grid[i, j], y_grid[i, j]])
+                closest_z = max_z - inverted_pointcloud[idx, 2]
 
-                # Update z_grid based on the closest point and epsilon
-                if closest_point_z + epsilon < z_grid[i, j]:
-                    z_grid[i, j] = closest_point_z + epsilon
+                neighbors = get_valid_neighbors(i, j, z_grid)
+                if neighbors:
+                    avg_neighbor_z = np.mean(neighbors)
+                    new_z = np.min([closest_z + epsilon, avg_neighbor_z])
+                else:
+                    new_z = closest_z + epsilon
 
-                # Apply tension by averaging with neighbor grid points to simulate internal forces
-                neighbor_indices = [(i-1, j), (i+1, j), (i, j-1), (i, j+1)]
-                valid_neighbors = [prev_z_grid[ni, nj] for ni, nj in neighbor_indices if 0 <= ni < z_grid.shape[0] and 0 <= nj < z_grid.shape[1]]
-                if valid_neighbors:
-                    z_grid[i, j] = np.mean([z_grid[i, j]] + valid_neighbors)
-                
-                # Calculate change for this grid point and update max_change if necessary
-                change = np.abs(prev_z_grid[i, j] - z_grid[i, j])
+                change = np.abs(z_grid[i, j] - new_z)
+                z_grid[i, j] = new_z
                 max_change = max(max_change, change)
 
-                print(f"Iteration {iteration+1}: Max change = {max_change}")
-                iteration += 1
-
-                if max_change <= delta_z_threshold:
-                    print("Simulation has stabilized.")
-                    break
-
-        # Check for convergence
-        if np.max(np.abs(prev_z_grid - z_grid)) < delta_z_threshold:
+        if max_change <= delta_z_threshold:
             break
         iteration += 1
 
-    # Classify points as ground or non-ground
+    # Classify points as ground or non-ground based on their final distance to the cloth
     ground_points = []
     non_ground_points = []
+    
     for point in pointcloud:
         x, y, z = point
         grid_x_idx = np.argmin(np.abs(x_grid[0, :] - x))
         grid_y_idx = np.argmin(np.abs(y_grid[:, 0] - y))
-        if np.abs(z_grid[grid_y_idx, grid_x_idx] - z) <= epsilon:
+        cloth_z = z_grid[grid_y_idx, grid_x_idx]
+        
+        # Classify points based on their final distance to the cloth
+        if np.abs(z - cloth_z) <= epsilon:
             ground_points.append(point)
         else:
-            non_ground_points.append(point)     
+            non_ground_points.append(point)
+
+    ground_points = np.array(ground_points)
+    non_ground_points = np.array(non_ground_points)
+    
+    # Just check the first 10 points for testing
+    # for i, point in enumerate(pointcloud[:10]):  
+    #     x, y, z = point
+    #     grid_x_idx = np.argmin(np.abs(x_grid[0, :] - x))
+    #     grid_y_idx = np.argmin(np.abs(y_grid[:, 0] - y))
+    #     cloth_z = z_grid[grid_y_idx, grid_x_idx]
+    #     distance_to_cloth = np.abs(z - cloth_z)
+    #     print(f"Point {i}: Z = {z}, Cloth Z = {cloth_z}, Distance = {distance_to_cloth}, Classified as {'ground' if distance_to_cloth <= epsilon else 'non-ground'}")
         
     # Show cloth points after the simulation
-    fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(inverted_pointcloud[:, 0], inverted_pointcloud[:, 1], inverted_pointcloud[:, 2], c='blue', label='Inverted Point Cloud', s=1)
-    ax.scatter(x_grid, y_grid, z_grid, c='red', label='Grid Points', s=1)
-    ax.set_title('Inverted Point Cloud and Grid/Cloth Points')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.legend()
-    plt.show()           
+    # fig = plt.figure(figsize=(15, 10))
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.scatter(inverted_pointcloud[:, 0], inverted_pointcloud[:, 1], inverted_pointcloud[:, 2], c='blue', label='Inverted Point Cloud', s=1)
+    # ax.scatter(x_grid, y_grid, z_grid, c='red', label='Grid Points', s=1)
+    # ax.set_title('Inverted Point Cloud and Grid/Cloth Points')
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # ax.set_zlabel('Z')
+    # ax.legend()
+    # plt.show()           
+    
+    # Show number of ground and non-ground points
+    print(f"Number of ground points: {ground_points.shape[0]}")
+    print(f"Number of non-ground points: {non_ground_points.shape[0]}")
 
-
-    return np.array(ground_points), np.array(non_ground_points)
+    return ground_points, non_ground_points
 
 ## Function to visualize the separation between ground and non-ground points (testing)
 def test_ground_non_ground_separation(ground_points, non_ground_points):
@@ -195,6 +213,36 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     ax.set_zlabel('Z')
     ax.legend()
     
+    plt.show()
+    
+    # Plot non-ground points and ground points on separate subplots (3D scatter plots)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 10), subplot_kw={'projection': '3d'})
+    ax1.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
+    ax1.set_title('Ground Points')
+    ax1.set_xlabel('X')
+    ax1.set_ylabel('Y')
+    ax1.set_zlabel('Z')
+    ax1.legend()      
+    ax2.scatter(non_ground_points[:, 0], non_ground_points[:, 1], non_ground_points[:, 2], c='red', label='Non-Ground Points', s=1)
+    ax2.set_title('Non-Ground Points')
+    ax2.set_xlabel('X')
+    ax2.set_ylabel('Y')
+    ax2.set_zlabel('Z')
+    ax2.legend()
+    plt.show()
+    
+    # Plot non-ground points and ground points on separate subplots (2D scatter plots)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 10))
+    ax1.scatter(ground_points[:, 0], ground_points[:, 1], c='green', label='Ground Points', s=1)
+    ax1.set_title('Ground Points')
+    ax1.set_xlabel('X')
+    ax1.set_ylabel('Y')
+    ax1.legend()
+    ax2.scatter(non_ground_points[:, 0], non_ground_points[:, 1], c='red', label='Non-Ground Points', s=1)
+    ax2.set_title('Non-Ground Points')
+    ax2.set_xlabel('X')
+    ax2.set_ylabel('Y')
+    ax2.legend()
     plt.show()
 
 ## Function to create ground.laz file
@@ -234,6 +282,20 @@ def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
     ax.set_zlabel('Z')
     plt.show()
     
+## Function to apply a median filter to the DTM to reduce spikes
+def apply_median_filter(dtm, size=3):
+    """
+    Apply a median filter to the DTM to reduce spikes.
+    
+    Parameters:
+    - dtm: The digital terrain model array.
+    - size: The size of the neighborhood to consider for the median filter.
+    
+    Returns:
+    - Filtered DTM.
+    """
+    return median_filter(dtm, size=size)
+ 
 ## Function to create a continuous DTM using Laplace interpolation
 def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
     print("Creating DTM with simplified Laplace interpolation...")
@@ -243,12 +305,16 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
     y_range = np.arange(miny, maxy, resolution)
     dtm = np.full((len(y_range), len(x_range)), np.nan)  # Initialize DTM with NaNs
 
-    # Populate the grid with Z-values from ground points
-    for point in ground_points:
-        x_idx = np.searchsorted(x_range, point[0]) - 1
-        y_idx = np.searchsorted(y_range, point[1]) - 1
-        if 0 <= x_idx < len(x_range) and 0 <= y_idx < len(y_range):
-            dtm[y_idx, x_idx] = point[2]  # Assign Z-value to the closest grid point
+    # Populate the grid with Z-values from ground points (use KDTree for efficient nearest neighbor search)
+    kdtree = cKDTree(ground_points[:, :2])
+    for i, y in enumerate(y_range):
+        for j, x in enumerate(x_range):
+            _, idx = kdtree.query([x, y], k=1)
+            dtm[i, j] = ground_points[idx, 2]      
+        
+            
+    # Supress warning: RuntimeWarning: Mean of empty slice
+    np.warnings.filterwarnings('ignore')
 
     # Perform a simple "smoothing" by averaging non-NaN neighbors
     for i in range(1, dtm.shape[0] - 1):
@@ -257,18 +323,17 @@ def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
                 neighbors = dtm[i-1:i+2, j-1:j+2]
                 dtm[i, j] = np.nanmean(neighbors)  # Mean of non-NaN neighbors
 
-    # TODO: Handle edge cases and improve interpolation quality
+    # Handle edge cases and improve interpolation quality by filling NaNs with the mean of the entire grid
+    dtm = np.where(np.isnan(dtm), np.nanmean(dtm), dtm)
 
     # Save DTM to a TIFF file
     with rasterio.open('dtm.tiff', 'w', driver='GTiff', height=dtm.shape[0], width=dtm.shape[1], count=1, dtype=str(dtm.dtype), crs='EPSG:32633', transform=rasterio.transform.from_origin(minx, maxy, resolution, resolution)) as dst:
         dst.write(dtm, 1)
     print("DTM saved as dtm.tiff")
 
-    # Testing
-    #visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
-
     return dtm 
 
+### Step 2: Ordinary Kriging
 ## Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
 def visualize_ok(dtm, x_range, y_range):
     X, Y = np.meshgrid(x_range, y_range)
@@ -311,6 +376,8 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     except MemoryError as e:
         print(f"MemoryError: {e}")
         return None
+    # Plot experimental semivariogram
+    experimental_semivariogram.plot()
 
     # Step 3: Fit a theoretical semivariogram model
     semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram,
@@ -319,7 +386,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
                                           rang=150, # Units: meters
                                           nugget=0)  # Units: meters
     print("\n\nTheoretical semivariogram model fitted.")
-    print("THEORETICAL\n",semivar)
+    print("\nTHEORETICA\n",semivar)
     
     # Step 4: Perform Ordinary Kriging
     x_coords = np.arange(minx, maxx + resolution, resolution)
@@ -368,12 +435,17 @@ def main():
         print (">> Ground points classified with CSF algorithm.\n")
         print("Starting testing of ground and non-ground points separation...")
         test_ground_non_ground_separation(ground_points, non_ground_points)
-    '''
+        print(">> Testing complete.\n")
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
         dtm = laplace_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
         print(">> Laplace interpolation complete.\n")
+        
+        # Apply median filter to the DTM to reduce spikes
+        dtm_filtered = apply_median_filter(dtm, size=5)
+        # Visualize or save the filtered DTM
+        visualize_laplace(dtm_filtered, args.minx, args.maxx, args.miny, args.maxy, args.res)
 
         # if DTM is saved, print message
         if dtm is not None:
@@ -385,7 +457,7 @@ def main():
     print ("Inializing Step 2...\n")
     ordinary_kriging_interpolation (ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
     print(">> Ordinary Kriging interpolation complete.\n")
-    '''
+    
 
 if __name__ == "__main__":
     main()
