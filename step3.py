@@ -1,4 +1,4 @@
-# THIS IS step1.py
+# THIS IS step3.py
 
 '''
 Compare your two created DTMs
@@ -6,7 +6,8 @@ Compare your two created DTMs
 2. and with the official AHN4 file (0.5m DTM).
 '''
 
-import step1 as st1
+import step1 
+import step2
 import fiona
 import shapely
 

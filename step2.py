@@ -1,30 +1,38 @@
 # Experımental code use step1 for now
+# THIS IS step2.py
 
-import step1 
+# python step2.py 0.1 190250 190550 313225 313525
+
 import numpy as np
-import startinpy as st
+import laspy
 from pyinterpolate import build_experimental_variogram, build_theoretical_variogram, kriging
+import argparse
 import rasterio
 from rasterio.transform import from_origin
-from scipy.spatial import cKDTree
-from scipy.ndimage import median_filter
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
-import laspy
+'''
+INPUTS:
+- Resolution of the DTM in meters
+- Minimum X of the area
+- Maximum X of the area
+- Minimum Y of the area
+- Maximum Y of the area
 
-import argparse
-
-
-import math
-import matplotlib.pyplot as plt # testing output
-from mpl_toolkits.mplot3d import Axes3D # testing output
-from tqdm import tqdm # Load bar
-
-
-# Run step 1 to get the ground points
-#TODO  
-
+OUTPUTS:
+- DTM created with Ordinary Kriging
+- Visualization of the DTM created with Ordinary Kriging
+'''
 
 ### Step 2: Ordinary Kriging
+## Function to load ground points from LAS file
+def load_ground_points_las(filename):
+    with laspy.open(filename) as f:
+        las = f.read()
+        ground_points = np.vstack((las.x, las.y, las.z)).transpose()
+    return ground_points
+
 ## Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
 def visualize_ok(dtm, x_range, y_range):
     X, Y = np.meshgrid(x_range, y_range)
@@ -108,19 +116,29 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     
     return dtm
 
-def main():
-    print ("Inializing Step 2...\n")
-    ordinary_kriging_interpolation (ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
-    print(">> Ordinary Kriging interpolation complete.\n")
+def main(res, minx, maxx, miny, maxy):
+    print("Initializing Step 2...")
+    # Use parsed arguments directly
+    print(f"Processing with resolution: {res} meters and area: {minx} to {maxx} and {miny} to {maxy}")
+
+    # Load ground points from LAS file
+    ground_points = load_ground_points_las('ground.laz')
+
+    # Perform Ordinary Kriging
+    dtm = ordinary_kriging_interpolation(ground_points, res, minx, maxx, miny, maxy)
+    
+    # Visualize the DTM created with Ordinary Kriging
+    visualize_ok(dtm, np.arange(minx, maxx + res, res), np.arange(miny, maxy + res, res))
+    
+    print("\n\n>> Step 2 complete.")
     
 if __name__ == "__main__":
-    # Add arguments to the parser
-    parser = argparse.ArgumentParser(description='Create a DTM using Ordinary Kriging')
-    parser.add_argument('res', type=float, help='Resolution of the DTM')
-    parser.add_argument('minx', type=float, help='Minimum x-coordinate of the DTM')
-    parser.add_argument('maxx', type=float, help='Maximum x-coordinate of the DTM')
-    parser.add_argument('miny', type=float, help='Minimum y-coordinate of the DTM')
-    parser.add_argument('maxy', type=float, help='Maximum y-coordinate of the DTM')
+    parser = argparse.ArgumentParser(description='Step 2: Ordinary Kriging Interpolation for DTM creation')
+    parser.add_argument('res', type=float, help='Resolution of the DTM in meters')
+    parser.add_argument('minx', type=float, help='Minimum X of the area')
+    parser.add_argument('maxx', type=float, help='Maximum X of the area')
+    parser.add_argument('miny', type=float, help='Minimum Y of the area')
+    parser.add_argument('maxy', type=float, help='Maximum Y of the area')
     args = parser.parse_args()
-    main()
-    
+
+    main(args.res, args.minx, args.maxx, args.miny, args.maxy)
