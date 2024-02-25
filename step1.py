@@ -67,7 +67,7 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
 def thin_pc(pointcloud):
     print("Thinning the point cloud...")
     thinned_pointcloud = pointcloud[::10]  # every 10th point is selected
-    print(f"Number of points after thinning: {thinned_pointcloud.shape[0]}")
+    print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
     return thinned_pointcloud
 
 # Function to get the valid neighbors of a grid point
@@ -92,10 +92,10 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
     inverted_pointcloud[:, 2] = max_z - pointcloud[:, 2]
     # Check if inversion was successful
     if np.array_equal(inverted_pointcloud, pointcloud):
-        print("Inversion failed. Aborting CSF.")
+        print(" Inversion failed. Aborting CSF.")
         return np.array([]), np.array([])
     else:
-        print("Inversion successful.") 
+        print(" Inversion successful.") 
         
     # Use KDTree for efficient nearest neighbor search
     kd_tree = cKDTree(inverted_pointcloud[:, :2])  # Using only X and Y
@@ -183,9 +183,16 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
     # plt.show()           
     
     # Show number of ground and non-ground points
-    print(f"Number of ground points: {ground_points.shape[0]}")
-    print(f"Number of non-ground points: {non_ground_points.shape[0]}")
+    print(f" Number of ground points: {ground_points.shape[0]}")
+    print(f" Number of non-ground points: {non_ground_points.shape[0]}")
 
+
+    # for testing reasons thin the ground points (DELETE AFTER TESTING)
+    ground_points = ground_points[::10]
+    non_ground_points = non_ground_points[::10]
+    print(f" Number of ground points after thinning: {ground_points.shape[0]}")
+    print(f" Number of non-ground points after thinning: {non_ground_points.shape[0]}")
+    
     return ground_points, non_ground_points
 
 ## Function to visualize the separation between ground and non-ground points (testing)
@@ -443,10 +450,11 @@ def main():
         print(">> Laplace interpolation complete.\n")
         
         # Apply median filter to the DTM to reduce spikes
-        dtm_filtered = apply_median_filter(dtm, size=5)
+        # dtm_filtered = apply_median_filter(dtm, size=5)
         # Visualize or save the filtered DTM
-        visualize_laplace(dtm_filtered, args.minx, args.maxx, args.miny, args.maxy, args.res)
-
+        #visualize_laplace(dtm_filtered, args.minx, args.maxx, args.miny, args.maxy, args.res)
+        visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+        
         # if DTM is saved, print message
         if dtm is not None:
             print(">> DTM saved to output file location.\n")
