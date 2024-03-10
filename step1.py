@@ -1,10 +1,18 @@
 
 # THIS IS step1.py
+
 # python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 5.0 0.2
+# laplace second attmtp : 
+# increase epsilon: python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 5.0 0.3
+# Decreasing CSF resolution : python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 3.0 0.2
+# Increasing CSF resolution: python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 7.0 0.2
+
+
 
 import numpy as np
-import startinpy as st
+import startinpy
 import rasterio
+from rasterio.transform import from_origin
 from scipy.spatial import cKDTree
 from scipy.ndimage import median_filter
 
@@ -12,11 +20,9 @@ import laspy
 
 import argparse
 
-
 import math
 import matplotlib.pyplot as plt # testing output
 from mpl_toolkits.mplot3d import Axes3D # testing output
-from tqdm import tqdm # Load bar
 
 '''
 INPUTS:
@@ -62,13 +68,50 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
         return None
 
 ## Function to thin the point cloud by half
-def thin_pc(pointcloud):
+def thin_pc(pointcloud, thinning_value):
     print("Thinning the point cloud...")
-    thinned_pointcloud = pointcloud[::10]  # every 10th point is selected
+    # Ensure thinning_value is an integer and greater than 0 to avoid errors
+    if not isinstance(thinning_value, int) or thinning_value <= 0:
+        raise ValueError("Thinning value must be an integer greater than 0.")
+    thinned_pointcloud = pointcloud[::thinning_value]  # Use the dynamic thinning value
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
     return thinned_pointcloud
 
-# Function to get the valid neighbors of a grid point
+# Function to remove outliers (z-value) based on the radius count method after CSF
+def filter_elevation_outliers (ground_points, z_threshold=1.0):
+    """
+    Filters out outliers from the ground points based on elevation differences.
+    
+    Parameters:
+    - ground_points: np.array, the input ground points as an array of [x, y, z].
+    - z_threshold: float, the maximum allowed elevation difference with neighbors to be considered an inlier.
+    
+    Returns:
+    - np.array, the filtered ground points with elevation outliers removed.
+    """
+    print("Filtering elevation outliers...")
+    filtered_points = []
+    # Use cKDTree for efficient nearest neighbor search in 3D
+    kdtree = cKDTree(ground_points)
+    
+    for i, point in enumerate(ground_points):
+        # Query for the 10 nearest neighbors
+        distances, indices = kdtree.query(point, k=20) # lower k means more noise, higher k means more smoothing
+        neighbor_z_values = ground_points[indices, 2] # Get the z values of the neighbors
+        
+        # Compute elevation differences
+        elevation_diff = np.abs(neighbor_z_values - point[2])
+        
+        # Check if the point is an outlier based on elevation differences
+        if np.all(elevation_diff < z_threshold):
+            filtered_points.append(point)
+    # Plot the filtered ground points
+    filtered_points = np.array(filtered_points)
+    print(f"    Number of ground points after filtering: {filtered_points.shape[0]}")
+    
+    return np.array(filtered_points)
+
+# (USED in CSF) Function to get the valid neighbors of a grid point
 def get_valid_neighbors(i, j, z_grid):
     neighbors = []
     for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:  # Check the four direct neighbors (up, down, left, right)
@@ -78,7 +121,7 @@ def get_valid_neighbors(i, j, z_grid):
     return neighbors
 
 ## Function to implement the Cloth Simulation Filter algorithm (CSF)
-def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, delta_z_threshold=0.01):
+def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=500, delta_z_threshold=0.01):
     print("Running Cloth Simulation Filter algorithm...")
 
     if pointcloud.size == 0:
@@ -93,7 +136,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
         print(" Inversion failed. Aborting CSF.")
         return np.array([]), np.array([])
     else:
-        print(" Inversion successful.") 
+        print(" Inversion of terrain successful.") 
         
     # Use KDTree for efficient nearest neighbor search
     kd_tree = cKDTree(inverted_pointcloud[:, :2])  # Using only X and Y
@@ -151,7 +194,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
         cloth_z = z_grid[grid_y_idx, grid_x_idx]
         
         # Classify points based on their final distance to the cloth
-        if np.abs(z - cloth_z) <= epsilon:
+        if np.abs(z - cloth_z) <= epsilon: # If the point is within epsilon distance of the cloth = ground
             ground_points.append(point)
         else:
             non_ground_points.append(point)
@@ -181,15 +224,15 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
     # plt.show()           
     
     # Show number of ground and non-ground points
-    print(f" Number of ground points: {ground_points.shape[0]}")
-    print(f" Number of non-ground points: {non_ground_points.shape[0]}")
+    print(f"    Number of ground points: {ground_points.shape[0]}")
+    print(f"    Number of non-ground points: {non_ground_points.shape[0]}")
 
 
-    # for testing reasons thin the ground points (DELETE AFTER TESTING)
+    # For testing reasons thin the ground points (DELETE AFTER TESTING)
     ground_points = ground_points[::10]
     non_ground_points = non_ground_points[::10]
-    print(f" Number of ground points after thinning: {ground_points.shape[0]}")
-    print(f" Number of non-ground points after thinning: {non_ground_points.shape[0]}")
+    print(f"    Number of ground points after thinning: {ground_points.shape[0]}")
+    print(f"    Number of non-ground points after thinning: {non_ground_points.shape[0]}")
     
     return ground_points, non_ground_points
 
@@ -202,9 +245,20 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     - ground_points: np.array, points classified as ground.
     - non_ground_points: np.array, points classified as non-ground.
     """
+    print("Starting testing of ground and non-ground points separation...")
+
+    # STATISTICAL INFORMATION
+    # See if there are exreme changes in the Z values of the ground points
+    print("     Ground Points - Statistical Information:")
+    print(f"        Mean Z: {np.mean(ground_points[:, 2])}")
+    print(f"        Median Z: {np.median(ground_points[:, 2])}")
+    print(f"        Standard Deviation Z: {np.std(ground_points[:, 2])}")
+    print(f"        Min Z: {np.min(ground_points[:, 2])}")
+    print(f"        Max Z: {np.max(ground_points[:, 2])}\n")
     
+    # PLOTS
     fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(111, projection='3d')
+    ax = fig.add_subplot(111, projection='3d')  
     
     if len(ground_points) > 0:
         ax.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
@@ -268,109 +322,124 @@ def save_ground_points_las(ground_points, filename="ground.laz"):
     else:
         print("No ground points found after CSF classification.")
 
+### Step 2: Laplace Interpolation
 ## Function to check if Laplace interpolation is working correctly (visualize with matplotlib)
 def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
-    # Generate the X and Y coordinates for the meshgrid
-    x_range = np.arange(minx, maxx, resolution)
-    y_range = np.arange(miny, maxy, resolution)
-    X, Y = np.meshgrid(x_range, y_range[:dtm.shape[0]])
-
+    # Create the grid
+    x_range = np.arange(minx, maxx + resolution, resolution)
+    y_range = np.arange(miny, maxy + resolution, resolution)
+    X, Y = np.meshgrid(x_range, y_range)
+    
+    # Plot the DTM created with Laplace interpolation
+    
     fig = plt.figure(figsize=(10, 7))
     ax = fig.add_subplot(111, projection='3d')
-
-    # Plot the surface
-    surf = ax.plot_surface(X, Y, dtm, cmap='terrain', edgecolor='none')
+    surf = ax.plot_surface(X, Y, dtm.T, cmap='terrain', edgecolor='none')  # Transpose dtm for correct orientation
     fig.colorbar(surf, shrink=0.5, aspect=5)
-    ax.set_title('DTM of Laplace')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+    plt.title('Digital Terrain Model (DTM) Interpolated with Laplace')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    ax.set_zlabel('Elevation')
+
     plt.show()
-    
-## Function to apply a median filter to the DTM to reduce spikes
-def apply_median_filter(dtm, size=3):
-    """
-    Apply a median filter to the DTM to reduce spikes.
-    
-    Parameters:
-    - dtm: The digital terrain model array.
-    - size: The size of the neighborhood to consider for the median filter.
-    
-    Returns:
-    - Filtered DTM.
-    """
-    return median_filter(dtm, size=size)
  
 ## Function to create a continuous DTM using Laplace interpolation
-def laplace_interpolation(ground_points, resolution, minx, maxx, miny, maxy):
-    print("Creating DTM with simplified Laplace interpolation...")
+def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
+    dt = startinpy.DT()
+    # Insert ground points into the triangulation
+    for pt in ground_points:
+        dt.insert_one_pt(pt[0], pt[1], pt[2])
 
-    # Create a grid covering the extents of the ground points with the specified resolution
-    x_range = np.arange(minx, maxx, resolution)
-    y_range = np.arange(miny, maxy, resolution)
-    dtm = np.full((len(y_range), len(x_range)), np.nan)  # Initialize DTM with NaNs
+    # Create the grid
+    x_range = np.arange(minx, maxx + resolution, resolution)
+    y_range = np.arange(miny, maxy + resolution, resolution)
+    dtm = np.empty((len(y_range), len(x_range)))
+    dtm.fill(np.nan)  # Initialize with NaNs
 
-    # Populate the grid with Z-values from ground points (use KDTree for efficient nearest neighbor search)
-    kdtree = cKDTree(ground_points[:, :2])
     for i, y in enumerate(y_range):
         for j, x in enumerate(x_range):
-            _, idx = kdtree.query([x, y], k=1)
-            dtm[i, j] = ground_points[idx, 2]      
-        
-            
-    # Supress warning: RuntimeWarning: Mean of empty slice
-    np.warnings.filterwarnings('ignore')
+            interpolated_value = 0
+            total_weight = 0
 
-    # Perform a simple "smoothing" by averaging non-NaN neighbors
-    for i in range(1, dtm.shape[0] - 1):
-        for j in range(1, dtm.shape[1] - 1):
-            if np.isnan(dtm[i, j]):
-                neighbors = dtm[i-1:i+2, j-1:j+2]
-                dtm[i, j] = np.nanmean(neighbors)  # Mean of non-NaN neighbors
+            # Try to locate the point (x, y) in the triangulation and get its containing triangle
+            try:
+                triangle = dt.locate(x, y)
+                vertices = [dt.get_point(v) for v in triangle if v != 0]  # Exclude the infinite vertex
                 
-    # Handle edge cases and improve interpolation quality
-    # If the difference between the Z-value of a point and the mean of its neighbors is too large, replace the Z-value with the mean of its neighbors
-    for i in range(1, dtm.shape[0] - 1):
-        for j in range(1, dtm.shape[1] - 1):
-            if not np.isnan(dtm[i, j]):
-                neighbors = dtm[i-1:i+2, j-1:j+2]
-                mean = np.nanmean(neighbors)
-                if np.abs(dtm[i, j] - mean) > 1:
-                    dtm[i, j] = mean
-        
-    # Fill NaN values with the mean of the non-NaN neighbors
-    dtm = np.nan_to_num(dtm, nan=np.nanmean(dtm))
+                for vertex in vertices:
+                    vertex_x, vertex_y, vertex_z = vertex
+                    distance = np.sqrt((x - vertex_x)**2 + (y - vertex_y)**2)
+                    if distance == 0:
+                        interpolated_value = vertex_z  # If exactly at a data point, use its value
+                        total_weight = 1
+                        break
+                    weight = 1 / distance  # Inverse distance weighting
+                    interpolated_value += weight * vertex_z
+                    total_weight += weight
+            except Exception as e:
+                interpolated_value = np.nan  # For points outside the convex hull or other errors
 
-    # Save DTM to a TIFF file
-    with rasterio.open('dtm.tiff', 'w', driver='GTiff', height=dtm.shape[0], width=dtm.shape[1], count=1, dtype=str(dtm.dtype), crs='EPSG:32633', transform=rasterio.transform.from_origin(minx, maxy, resolution, resolution)) as dst:
+            if total_weight > 0 and not np.isnan(interpolated_value):
+                dtm[i, j] = interpolated_value / total_weight
+            else:
+                dtm[i, j] = np.nan
+                
+    # Handle outliers by adjusting elevations based on neighboring values
+    for i in range(1, len(y_range)-1):
+        for j in range(1, len(x_range)-1):
+            center_val = dtm[i, j] # Center value
+            surrounding_vals = dtm[i-1:i+2, j-1:j+2].flatten() # Flatten the 3x3 surrounding array
+            valid_surrounding = surrounding_vals[np.isfinite(surrounding_vals)] # Exclude NaNs
+            if len(valid_surrounding) > 0:
+                diff = np.abs(valid_surrounding - center_val)
+                if np.any(diff > 1):  # Threshold for considering as spike
+                    dtm[i, j] = np.mean(valid_surrounding)
+    
+    # Save the DTM to a TIFF file
+    transform = from_origin(minx, maxy, resolution, -resolution) # Define the transformation
+    with rasterio.open('dtm_laplace.tiff', 'w', driver='GTiff',
+                       height=dtm.shape[0], width=dtm.shape[1],
+                       count=1, dtype=str(dtm.dtype), crs='EPSG:4326',
+                       transform=transform) as dst:
         dst.write(dtm, 1)
-    print("DTM saved as dtm.tiff")
 
-    return dtm 
+    print("\nDTM saved as dtm_laplace.tiff")
+
+    return dtm
 
 ## Main function
 def main():
     # Use parsed arguments directly
-    print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}\n")
-   
-    # Processing pipeline for Step 1
+    print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
+maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}")
+
+    ## Processing pipeline for Step 1: Ground filtering with CSF
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
     if pointcloud is None or pointcloud.size == 0:
         print("No points found within the specified bounding box.")
         return
     if pointcloud is not None:
         print(">> Point cloud read successfully.\n")
-        thinned_pc = thin_pc(pointcloud)
+        thinned_pc = thin_pc(pointcloud, 10)
         print(">> Point cloud thinned.\n")
+    
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
-        print("Starting testing of ground and non-ground points separation...")
+        
         test_ground_non_ground_separation(ground_points, non_ground_points)
         print(">> Testing complete.\n")
+        
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
-        dtm = laplace_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
+        
+         # Outlier detection and removal
+        ground_points = filter_elevation_outliers(ground_points, z_threshold=1.0)        
+        print(">> Outliers removed.\n")
+        
+        ## Processing pipeline for Step 2: Laplace Interpolation
+        # Laplace interpolation to create a continuous DTM
+        dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
         print(">> Laplace interpolation complete.\n")
         
         # Visualize or save the filtered DTM
@@ -379,6 +448,8 @@ def main():
         # if DTM is saved, print message
         if dtm is not None:
             print(">> DTM saved to output file location.\n")
+        else:
+            print(">> DTM could NOT be saved to output file location. :(\n")
         
         print("\nStep 1 completed!\n\n")   
 
