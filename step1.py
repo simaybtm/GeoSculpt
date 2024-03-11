@@ -64,7 +64,8 @@ def thin_pc(pointcloud, thinning_value):
     # Ensure thinning_value is an integer and greater than 0 to avoid errors
     if not isinstance(thinning_value, int) or thinning_value <= 0:
         raise ValueError("Thinning value must be an integer greater than 0.")
-    thinned_pointcloud = pointcloud[::thinning_value]  # Use the dynamic thinning value
+    thinned_pointcloud = pointcloud[::thinning_value]  
+    print(f" Number of points before thinning: {pointcloud.shape[0]}")
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
     return thinned_pointcloud
 
@@ -368,6 +369,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
 ## Main function
 def main():
     # Use parsed arguments directly
+    print("\n")
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
 maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}")
 
