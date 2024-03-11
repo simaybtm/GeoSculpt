@@ -352,7 +352,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
             valid_surrounding = surrounding_vals[np.isfinite(surrounding_vals)] # Exclude NaNs
             if len(valid_surrounding) > 0:
                 diff = np.abs(valid_surrounding - center_val)
-                if np.any(diff > 1):  # Threshold for considering as spike: if the difference is greater than n meter
+                if np.any(diff > 0.5):  # Threshold for considering as spike: if the difference is greater than n meter
                     dtm[i, j] = np.mean(valid_surrounding)
     
     # Save the DTM to a TIFF file
