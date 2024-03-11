@@ -1,20 +1,13 @@
 
 # THIS IS step1.py
 
-# python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 5.0 0.2
-# laplace second attmtp : 
-# increase epsilon: python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 5.0 0.3
-# Decreasing CSF resolution : python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 3.0 0.2
-# Increasing CSF resolution: python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.5 7.0 0.2
-
-
+# python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 8.0 5.0 4
 
 import numpy as np
 import startinpy
 import rasterio
 from rasterio.transform import from_origin
 from scipy.spatial import cKDTree
-from scipy.ndimage import median_filter
 
 import laspy
 
@@ -77,39 +70,28 @@ def thin_pc(pointcloud, thinning_value):
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
     return thinned_pointcloud
 
-# Function to remove outliers (z-value) based on the radius count method after CSF
-def filter_elevation_outliers (ground_points, z_threshold=1.0):
-    """
-    Filters out outliers from the ground points based on elevation differences.
-    
-    Parameters:
-    - ground_points: np.array, the input ground points as an array of [x, y, z].
-    - z_threshold: float, the maximum allowed elevation difference with neighbors to be considered an inlier.
-    
-    Returns:
-    - np.array, the filtered ground points with elevation outliers removed.
-    """
+# Function to remove outliers (z-value) based on the k-NN distance method before CSF
+def filter_outliers(pointcloud, k, k_dist_threshold):
     print("Filtering elevation outliers...")
-    filtered_points = []
-    # Use cKDTree for efficient nearest neighbor search in 3D
-    kdtree = cKDTree(ground_points)
+
+    if pointcloud.size == 0:
+        return pointcloud
     
-    for i, point in enumerate(ground_points):
-        # Query for the 10 nearest neighbors
-        distances, indices = kdtree.query(point, k=20) # lower k means more noise, higher k means more smoothing
-        neighbor_z_values = ground_points[indices, 2] # Get the z values of the neighbors
-        
-        # Compute elevation differences
-        elevation_diff = np.abs(neighbor_z_values - point[2])
-        
-        # Check if the point is an outlier based on elevation differences
-        if np.all(elevation_diff < z_threshold):
-            filtered_points.append(point)
-    # Plot the filtered ground points
-    filtered_points = np.array(filtered_points)
-    print(f"    Number of ground points after filtering: {filtered_points.shape[0]}")
-    
-    return np.array(filtered_points)
+    # Build a KDTree for efficient neighbor search using X and Y coordinates
+    kd_tree = cKDTree(pointcloud[:, :2])
+
+    # Query the k+1 nearest neighbors for each point (includes the point itself)
+    distances, _ = kd_tree.query(pointcloud[:, :2], k=k + 1)
+
+    # Compute the mean distance to the k nearest neighbors (excluding the first distance which is zero)
+    mean_distances = np.mean(distances[:, 1:], axis=1)
+
+    # Identify points where the mean distance to neighbors is below the threshold
+    mask = mean_distances <= k_dist_threshold
+    filtered_pointcloud = pointcloud[mask]
+
+    print(f"Number of points after outlier removal: {filtered_pointcloud.shape[0]}")
+    return filtered_pointcloud
 
 # (USED in CSF) Function to get the valid neighbors of a grid point
 def get_valid_neighbors(i, j, z_grid):
@@ -121,9 +103,9 @@ def get_valid_neighbors(i, j, z_grid):
     return neighbors
 
 ## Function to implement the Cloth Simulation Filter algorithm (CSF)
-def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=500, delta_z_threshold=0.01):
+def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, delta_z_threshold=0.01): 
     print("Running Cloth Simulation Filter algorithm...")
-
+    
     if pointcloud.size == 0:
         print("Empty point cloud after filtering or thinning.")
         return np.array([]), np.array([])
@@ -392,7 +374,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
             valid_surrounding = surrounding_vals[np.isfinite(surrounding_vals)] # Exclude NaNs
             if len(valid_surrounding) > 0:
                 diff = np.abs(valid_surrounding - center_val)
-                if np.any(diff > 1):  # Threshold for considering as spike
+                if np.any(diff > 3):  # Threshold for considering as spike: if the difference is greater than 1 meter
                     dtm[i, j] = np.mean(valid_surrounding)
     
     # Save the DTM to a TIFF file
@@ -423,6 +405,10 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         thinned_pc = thin_pc(pointcloud, 10)
         print(">> Point cloud thinned.\n")
     
+        # Outlier detection and removal according to radius count method
+        thinned_pc = filter_outliers(thinned_pc, k=10, k_dist_threshold=1.0)
+        print(">> Outliers removed.\n")
+        
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
         
@@ -432,10 +418,6 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
-        
-         # Outlier detection and removal
-        ground_points = filter_elevation_outliers(ground_points, z_threshold=1.0)        
-        print(">> Outliers removed.\n")
         
         ## Processing pipeline for Step 2: Laplace Interpolation
         # Laplace interpolation to create a continuous DTM
