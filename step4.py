@@ -1,6 +1,4 @@
 
-#THIS IS step4.py
-
 import numpy as np
 import rasterio
 import argparse

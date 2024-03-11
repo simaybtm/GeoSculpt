@@ -1,4 +1,9 @@
-# THIS IS step3.py
+
+import rasterio
+import numpy as np
+import matplotlib.pyplot as plt
+import argparse
+from rasterio.warp import calculate_default_transform, reproject, Resampling
 
 '''
 Compare your two created DTMs
@@ -7,11 +12,6 @@ Compare your two created DTMs
 
 # Highlight their differences and try to explain why they are different in the report.
 '''
-import rasterio
-import numpy as np
-import matplotlib.pyplot as plt
-import argparse
-from rasterio.warp import calculate_default_transform, reproject, Resampling
 
 # Define the command-line arguments
 parser = argparse.ArgumentParser(description='Compare DTMs.')

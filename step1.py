@@ -1,6 +1,4 @@
 
-# THIS IS step1.py
-
 # python step1.py 69EZ1_21.LAZ 190250 313225 190550 313525 8.0 5.0 4
 
 import numpy as np
