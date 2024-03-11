@@ -332,40 +332,18 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     for pt in ground_points:
         dt.insert_one_pt(pt[0], pt[1], pt[2])
 
-    # Create the grid
     x_range = np.arange(minx, maxx + resolution, resolution)
     y_range = np.arange(miny, maxy + resolution, resolution)
-    dtm = np.empty((len(y_range), len(x_range)))
-    dtm.fill(np.nan)  # Initialize with NaNs
+    dtm = np.full((len(y_range), len(x_range)), np.nan)  # Initialize with NaNs
 
     for i, y in enumerate(y_range):
         for j, x in enumerate(x_range):
-            interpolated_value = 0
-            total_weight = 0
-
-            # Try to locate the point (x, y) in the triangulation and get its containing triangle
-            try:
-                triangle = dt.locate(x, y)
-                vertices = [dt.get_point(v) for v in triangle if v != 0]  # Exclude the infinite vertex
-                
-                for vertex in vertices:
-                    vertex_x, vertex_y, vertex_z = vertex
-                    distance = np.sqrt((x - vertex_x)**2 + (y - vertex_y)**2)
-                    if distance == 0:
-                        interpolated_value = vertex_z  # If exactly at a data point, use its value
-                        total_weight = 1
-                        break
-                    weight = 1 / distance  # Inverse distance weighting
-                    interpolated_value += weight * vertex_z
-                    total_weight += weight
-            except Exception as e:
-                interpolated_value = np.nan  # For points outside the convex hull or other errors
-
-            if total_weight > 0 and not np.isnan(interpolated_value):
-                dtm[i, j] = interpolated_value / total_weight
-            else:
-                dtm[i, j] = np.nan
-                
+            if dt.is_inside_convex_hull(x, y):
+                # Perform interpolation only if the point is inside the convex hull
+                closest_vertex_index = dt.closest_point(x, y)
+                closest_vertex = dt.get_point(closest_vertex_index)
+                dtm[i, j] = closest_vertex[2]  # Use Z value of the closest vertex
+                            
     # Handle outliers by adjusting elevations based on neighboring values
     for i in range(1, len(y_range)-1):
         for j in range(1, len(x_range)-1):
@@ -374,7 +352,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
             valid_surrounding = surrounding_vals[np.isfinite(surrounding_vals)] # Exclude NaNs
             if len(valid_surrounding) > 0:
                 diff = np.abs(valid_surrounding - center_val)
-                if np.any(diff > 3):  # Threshold for considering as spike: if the difference is greater than 1 meter
+                if np.any(diff > 1):  # Threshold for considering as spike: if the difference is greater than n meter
                     dtm[i, j] = np.mean(valid_surrounding)
     
     # Save the DTM to a TIFF file
