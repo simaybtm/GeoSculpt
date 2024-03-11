@@ -9,21 +9,6 @@ In this assignment you need to:
 You have to use the following Python libraries (others are not accepted, or ask me first): numpy, startinpy, pyinterpolate, rasterio, scipy, laspy, fiona, shapely.
 '''
 
-
-'''
-import numpy as np
-import startinpy as st
-import pyinterpolate as pi
-import rasterio
-import scipy
-import laspy
-import fiona
-import shapely
-'''
-
-#THIS IS main.py
-
-
 import step4
 import step1
 import step2

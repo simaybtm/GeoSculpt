@@ -1,5 +1,3 @@
-# THIS IS step2.py
-
 # python step2.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.1 5.0 2
 
 from step1 import read_las, thin_pc, get_valid_neighbors, filter_elevation_outliers, cloth_simulation_filter, test_ground_non_ground_separation, save_ground_points_las
