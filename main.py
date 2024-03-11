@@ -26,42 +26,35 @@ import shapely
 
 import step4
 import step1
-
+import step2
+import step3
 
 
 def run_all():
     # Ask user for the input file location
-    #TODO: Change hardcoded input file while submitting
-    #dtm_input_file = input("Enter the path to the input file for DTM and step4: ")
-    dtm_input_file = r'C:\Users\simay\OneDrive\Desktop\DTM_R\DTM_creation\69EZ1_21.LAZ'
+    dtm_input_file = input("Enter the path to the input file for DTM and step4: ")
     
     # Ask user for the output file location for GFLAP
-    #TODO: Change hardcoded input file while submitting
-    #dtm_output_file = input("Enter the path to the output file for DTM: ")
-    dtm_output_file = r'C:\Users\simay\OneDrive\Desktop\DTM_R\DTM_creation\dtm.tiff'
+    dtm_output_file = input("Enter the path to the output file for DTM: ")
     
-    # Running GFLAP main function
+    # Running step1
     print("Running Ground filtering + DTM creation with Laplace...")
     step1.main(dtm_input_file, dtm_output_file)
     print("Ground filtering + DTM creation with Laplace step is complete.")
 
-    # Ask user for the output file location for step4
-    step4_output_file = input("Enter the path to the output file for step4: ")
+    # Running step2
+    print("Running Ground filtering + DTM creation with OK...")
+    step2.main(dtm_input_file, dtm_output_file)
     
-    # Running step4 main function
-    print("Running Visualisation with iso-contours...")
-    step4.main(dtm_input_file, step4_output_file)
-    print("Visualisation with iso-contours complete.")
+    # Running step3
+    print("Running step3... comparing DTMs...")
+    step3.main(dtm_output_file)
 
-    '''
-    # The output file from step4 is used as input for laplace_chm
-    laplace_chm_input_file = step4_output_file
+   # Running step4
+    print("Running step4... extracting and saving contours...")
+    step4.main(dtm_output_file)
 
-    # Running laplace_chm main function
-    print("Running laplace_chm...")
-    laplace_chm.main(laplace_chm_input_file, dtm_output_file)  # Passing TIFF from step4 and LAS from GFTIN
-    print("laplace_chm processing complete.")
-    '''
+    print("All steps are complete.")
 
 if __name__ == "__main__":
     run_all()
