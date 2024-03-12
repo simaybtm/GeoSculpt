@@ -1,6 +1,6 @@
 # python step2.py 69EZ1_21.LAZ 190250 313225 190550 313525 0.1 5.0 2
 
-from step1 import read_las, thin_pc, get_valid_neighbors, filter_elevation_outliers, cloth_simulation_filter, test_ground_non_ground_separation, save_ground_points_las
+from step1 import read_las, thin_pc, get_valid_neighbors, filter_outliers, cloth_simulation_filter, test_ground_non_ground_separation, save_ground_points_las
 
 
 import numpy as np
@@ -11,11 +11,9 @@ import rasterio
 from rasterio.transform import from_origin
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import startinpy as st
 import rasterio
 from scipy.spatial import cKDTree
 
-from tqdm import tqdm # Load bar
 
 '''
 INPUTS:
@@ -67,22 +65,23 @@ def visualize_ok(dtm, x_range, y_range):
     plt.show()
     
 ## Function to create a continuous DTM using Ordinary Kriging
-def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy, thinning_factor=10, search_radius_factor=10, max_range_factor=2, no_neighbors=16):
+def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy, thinning_factor=10, search_radius_factor=1, max_range_factor=2, no_neighbors=8):
     print("Starting Ordinary Kriging interpolation...")
 
     # Calculate variance of the dataset 
-    #variance = np.var(ground_points[:, 2])
-    #print(f"Variance of the dataset: {variance}")
+    variance = np.var(ground_points[:, 2])
+    print(f"Variance of the dataset: {variance}\n")
 
     # Prepare the data
     point_data = np.array(ground_points)
     # Thin further for experimental semivariogram
     point_data = ground_points[::thinning_factor]
 
-    # Step 2: Calculate the experimental semivariogram
-    search_radius = resolution * search_radius_factor
+    # Set the search radius and max range
+    search_radius = resolution * search_radius_factor 
     max_range = ((maxx - minx) / max_range_factor, (maxy - miny) / max_range_factor)
     
+    # Step 2: Calculate the experimental semivariogram
     try:
         experimental_semivariogram = build_experimental_variogram(
             input_array=point_data, step_size=search_radius, max_range=max(max_range))
@@ -91,15 +90,13 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     except MemoryError as e:
         print(f"MemoryError: {e}")
         return None
-    # Plot experimental semivariogram
-    experimental_semivariogram.plot()
 
     # Step 3: Fit a theoretical semivariogram model
     semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram,
                                           model_name='linear', 
-                                          sill=30, # Units: meters 
-                                          rang=150, # Units: meters
-                                          nugget=0)  # Units: meters
+                                          sill=60, # meters 
+                                          rang=300, # meters 
+                                          nugget=0)  # meters
     print("\n\nTheoretical semivariogram model fitted.")
     print("\nTHEORETICAL MODEL\n",semivar)
     
@@ -114,7 +111,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     predictions = kriging(observations=point_data, theoretical_model=semivar,
                           points=unknown_points, how='ok', no_neighbors=no_neighbors)
 
-    # Reshape predictions to match the grid
+    # Reshape predictions to match the grid -> kriging returns a list of tuples 
     predicted_values = np.array([pred[0] for pred in predictions])
     dtm = predicted_values.reshape(grid_y.shape)
 
@@ -138,7 +135,7 @@ def main():
     # Use parsed arguments directly
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}\n")
    
-    ## Processing pipeline for Step 1: Ground filtering with CSF
+    ## Step 1: Ground filtering with CSF
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
     if pointcloud is None or pointcloud.size == 0:
         print("No points found within the specified bounding box.")
@@ -148,21 +145,21 @@ def main():
         thinned_pc = thin_pc(pointcloud, 10)
         print(">> Point cloud thinned.\n")
     
+        # Outlier detection and removal
+        thinned_pc = filter_outliers(thinned_pc, k=10, k_dist_threshold=1.0)
+        print(">> Outliers removed.\n")
+        
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
         
         test_ground_non_ground_separation(ground_points, non_ground_points)
-        print(">> Testing complete.\n")
+        print(">> Testing CSF complete.\n")
         
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
         
-         # Outlier detection and removal
-        ground_points = filter_elevation_outliers(ground_points, z_threshold=1.0)        
-        print(">> Outliers removed.\n")
-        
-        ## Processing pipeline for Step 2: Ordinary Kriging
+        ## Step 2: Ordinary Kriging
         # Perform Ordinary Kriging to create a continuous DTM
         dtm = ordinary_kriging_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
         print(">> Ordinary Kriging interpolation complete.\n")
