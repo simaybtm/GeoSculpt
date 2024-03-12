@@ -44,7 +44,7 @@ parser.add_argument('csf_res', type=float, help='Resolution in meters for the CS
 parser.add_argument('epsilon', type=float, help='Threshold in meters to classify the ground')
 args = parser.parse_args()
 
-### Step 1: Ground filtering + DTM creation with Laplace
+### Step 1: Ground filtering with CSF
 ## Read LAS file with laspy and filter points by bounds
 def read_las(file_path, min_x, max_x, min_y, max_y):
     try:
@@ -120,12 +120,12 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
         print(" Inversion of terrain successful.") 
         
     # Use KDTree for efficient nearest neighbor search
-    kd_tree = cKDTree(inverted_pointcloud[:, :2])  # Using only X and Y
+    kd_tree = cKDTree(inverted_pointcloud[:, :2])  
     
     # Initializing the cloth/grid
-    x_min, x_max = np.min(pointcloud[:, 0]), np.max(pointcloud[:, 0]) # Get the min and max x values to create the grid
+    x_min, x_max = np.min(pointcloud[:, 0]), np.max(pointcloud[:, 0]) # Get the min and max x
     y_min, y_max = np.min(pointcloud[:, 1]), np.max(pointcloud[:, 1])
-    x_grid, y_grid = np.meshgrid(np.arange(x_min, x_max, csf_res), np.arange(y_min, y_max, csf_res)) # Create the grid
+    x_grid, y_grid = np.meshgrid(np.arange(x_min, x_max, csf_res), np.arange(y_min, y_max, csf_res)) 
     z_grid = np.full(x_grid.shape, max_z + 10) # Initialize the grid with a value higher than the max z value
     
     # Show "grid/cloth" points above the inverted point cloud
@@ -144,23 +144,23 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
     iteration = 0
     while iteration < max_iterations:
         max_change = 0
-        for i in range(z_grid.shape[0]):
+        for i in range(z_grid.shape[0]): # Iterate over each grid point
             for j in range(z_grid.shape[1]):
                 dist, idx = kd_tree.query([x_grid[i, j], y_grid[i, j]])
                 closest_z = max_z - inverted_pointcloud[idx, 2]
 
                 neighbors = get_valid_neighbors(i, j, z_grid)
-                if neighbors:
+                if neighbors: # If there are valid neighbors, update the grid point
                     avg_neighbor_z = np.mean(neighbors)
                     new_z = np.min([closest_z + epsilon, avg_neighbor_z])
-                else:
+                else: # If there are no valid neighbors, use the closest point's z value
                     new_z = closest_z + epsilon
 
-                change = np.abs(z_grid[i, j] - new_z)
-                z_grid[i, j] = new_z
-                max_change = max(max_change, change)
+                change = np.abs(z_grid[i, j] - new_z) 
+                z_grid[i, j] = new_z # Update the grid point
+                max_change = max(max_change, change) # Update the max change
 
-        if max_change <= delta_z_threshold:
+        if max_change <= delta_z_threshold: # If the max change is below the threshold, break the loop
             break
         iteration += 1
 
@@ -175,7 +175,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
         cloth_z = z_grid[grid_y_idx, grid_x_idx]
         
         # Classify points based on their final distance to the cloth
-        if np.abs(z - cloth_z) <= epsilon: # If the point is within epsilon distance of the cloth = ground
+        if np.abs(z - cloth_z) <= epsilon: # If the point is within epsilon distance of the cloth => ground
             ground_points.append(point)
         else:
             non_ground_points.append(point)
@@ -210,14 +210,14 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
 
 
     # For testing reasons thin the ground points (DELETE AFTER TESTING)
-    ground_points = ground_points[::10]
-    non_ground_points = non_ground_points[::10]
-    print(f"    Number of ground points after thinning: {ground_points.shape[0]}")
-    print(f"    Number of non-ground points after thinning: {non_ground_points.shape[0]}")
+    # ground_points = ground_points[::10]
+    # non_ground_points = non_ground_points[::10]
+    # print(f"    Number of ground points after thinning: {ground_points.shape[0]}")
+    # print(f"    Number of non-ground points after thinning: {non_ground_points.shape[0]}")
     
     return ground_points, non_ground_points
 
-## Function to visualize the separation between ground and non-ground points (testing)
+## (TESTING) Function to visualize the separation between ground and non-ground points
 def test_ground_non_ground_separation(ground_points, non_ground_points):
     """
     Visualizes the separation between ground and non-ground points.
@@ -287,7 +287,7 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
 
 ## Function to create ground.laz file
 def save_ground_points_las(ground_points, filename="ground.laz"):
-    print("Saving ground points to LAS file...")
+    print("Saving ground points to a new LAS file called ground.laz...")
     if ground_points.size > 0:
         # Create a new LAS file with laspy
         header = laspy.LasHeader(version="1.4", point_format=2)
@@ -304,7 +304,7 @@ def save_ground_points_las(ground_points, filename="ground.laz"):
         print("No ground points found after CSF classification.")
 
 ### Step 2: Laplace Interpolation
-## Function to check if Laplace interpolation is working correctly (visualize with matplotlib)
+## (TESTING) Function to check if Laplace interpolation is working correctly (visualize with matplotlib)
 def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
     # Create the grid
     x_range = np.arange(minx, maxx + resolution, resolution)
@@ -373,7 +373,7 @@ def main():
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
 maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}")
 
-    ## Processing pipeline for Step 1: Ground filtering with CSF
+    ## Step 1: Ground filtering with CSF
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
     if pointcloud is None or pointcloud.size == 0:
         print("No points found within the specified bounding box.")
@@ -383,7 +383,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         thinned_pc = thin_pc(pointcloud, 10)
         print(">> Point cloud thinned.\n")
     
-        # Outlier detection and removal according to radius count method
+        # Outlier detection and removal
         thinned_pc = filter_outliers(thinned_pc, k=10, k_dist_threshold=1.0)
         print(">> Outliers removed.\n")
         
@@ -391,13 +391,13 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         print (">> Ground points classified with CSF algorithm.\n")
         
         test_ground_non_ground_separation(ground_points, non_ground_points)
-        print(">> Testing complete.\n")
+        print(">> Testing CSF complete.\n")
         
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
         
-        ## Processing pipeline for Step 2: Laplace Interpolation
+        ## Step 2: Laplace Interpolation
         # Laplace interpolation to create a continuous DTM
         dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
         print(">> Laplace interpolation complete.\n")

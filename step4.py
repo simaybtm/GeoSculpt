@@ -5,7 +5,7 @@ import argparse
 import matplotlib.pyplot as plt
 import fiona
 from fiona.crs import from_epsg
-from shapely.geometry import mapping, LineString, shape
+from shapely.geometry import mapping, LineString, box
 
 
 '''
@@ -23,53 +23,62 @@ parser = argparse.ArgumentParser(description='Extract and save contours from a G
 parser.add_argument('inputfile', type=str, help='Input GeoTIFF file representing the DTM.')
 args = parser.parse_args()
 
-def extract_and_save_contours(geo_tiff_path, output_gpkg_path, interval=1.0):
-    # Open the GeoTIFF file
-    with rasterio.open(geo_tiff_path) as src:
-        elevation = src.read(1)  # Read the first band into a 2D array
-        affine = src.transform
-        crs = src.crs  # Directly use the CRS of the input file
-        
-        # Ensure interval is positive and non-zero
-        interval = max(interval, 1e-5)  # Prevent zero or negative interval
+def is_near_edge(line, affine, shape, buffer_distance=15):
+    """
+    Checks if a line is within a certain buffer distance from the edges of the raster.
+    """
+    raster_box = box(affine.c, affine.f, affine.c + affine.a * shape[1], affine.f + affine.e * shape[0])
+    edge_buffer = raster_box.buffer(-buffer_distance) # Contract the raster boundary by buffer_distance
+    return not line.within(edge_buffer)
 
-        print(elevation.min(), elevation.max())
-        # Calculate min and max elevation values, ensuring they are finite
+def extract_and_save_contours(geo_tiff_path, output_gpkg_path, interval=1.0):
+    with rasterio.open(geo_tiff_path) as src:
+        elevation = src.read(1)
+        affine = src.transform
+        crs = src.crs
+        raster_shape = elevation.shape
+
+        if np.isnan(elevation).any():
+            mean_elevation = np.nanmean(elevation[np.isfinite(elevation)])
+            elevation[np.isnan(elevation)] = mean_elevation
+
         min_elevation = np.nanmin(elevation)
         max_elevation = np.nanmax(elevation)
-        if not np.isfinite(min_elevation) or not np.isfinite(max_elevation):
-            print("Error: Elevation data contains non-finite values.")
-            return
-        
-        # Adjust min and max elevations to ensure they span at least one interval
-        if min_elevation == max_elevation:
-            min_elevation -= 0.5 * interval
-            max_elevation += 0.5 * interval
-        
-        # Generate contour lines at specified intervals
         contour_levels = np.arange(min_elevation, max_elevation, interval)
-        if contour_levels.size == 0:
-            print("Error: No contour levels could be generated.")
-            return
-        
-        # Generate contours and process them
-        contours = plt.contour(elevation, levels=contour_levels, origin='upper', 
-                               extent=[affine.c, affine.c + affine.a * elevation.shape[1], 
-                                       affine.f + affine.e * elevation.shape[0], affine.f], 
-                               linestyles='solid')
+        print(f"Extracting contours at levels: {contour_levels}")
 
-        # Prepare GeoPackage output
+        contours = plt.contour(elevation, levels=contour_levels, origin='upper', 
+                               extent=[affine.c, affine.c + affine.a * raster_shape[1], 
+                                       affine.f + affine.e * raster_shape[0], affine.f], 
+                               linestyles='solid')
+        print(f"Contours extracted from {geo_tiff_path}")
+        
+        # Check if none of the contours are touching each other
+        for i, contour_path in enumerate(contours.collections):
+            for path in contour_path.get_paths():
+                line = LineString(path.vertices)
+                if line.is_simple:
+                    continue
+                else:
+                    print(f"Contour {i} is not simple")
+                    break
+     
+        
+
         schema = {'geometry': 'LineString', 'properties': {'elevation': 'float'}}
         with fiona.open(output_gpkg_path, 'w', driver='GPKG', crs=crs, schema=schema) as dst:
             for i, contour_path in enumerate(contours.collections):
                 for path in contour_path.get_paths():
                     line = LineString(path.vertices)
-                    feature = {
-                        'geometry': mapping(line),
-                        'properties': {'elevation': contour_levels[i]},
-                    }
-                    dst.write(feature)
-                    
+                    # Increase the length threshold for contours near the edge
+                    length_threshold = 5 if is_near_edge(line, affine, raster_shape) else 1
+                    if line.length > length_threshold:
+                        feature = {
+                            'geometry': mapping(line),
+                            'properties': {'elevation': contour_levels[i]},
+                        }
+                        dst.write(feature)
+
     print(f"Contours saved to {output_gpkg_path}")
     return output_gpkg_path
 
