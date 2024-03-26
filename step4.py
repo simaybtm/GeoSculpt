@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import fiona
 from fiona.crs import from_epsg
 from shapely.geometry import mapping, LineString, box
+from shapely.ops import unary_union
+
+from scipy.ndimage import gaussian_filter
+
 
 
 '''
@@ -31,61 +35,47 @@ def is_near_edge(line, affine, shape, buffer_distance=15):
     edge_buffer = raster_box.buffer(-buffer_distance) # Contract the raster boundary by buffer_distance
     return not line.within(edge_buffer)
 
-def extract_and_save_contours(geo_tiff_path, output_gpkg_path, interval=1.0):
+def extract_and_save_contours(geo_tiff_path, output_gpkg_path, interval=1.0, simplify_tolerance=0.5, buffer_distance=15, sigma=1):
     with rasterio.open(geo_tiff_path) as src:
-        elevation = src.read(1)
+        elevation = src.read(1, masked=True) # Read the first band (index 0) and mask no data values
         affine = src.transform
         crs = src.crs
-        raster_shape = elevation.shape
 
-        if np.isnan(elevation).any():
-            mean_elevation = np.nanmean(elevation[np.isfinite(elevation)])
-            elevation[np.isnan(elevation)] = mean_elevation
+        # Apply Gaussian smoothing
+        # elevation = gaussian_filter(elevation.filled(fill_value=np.nanmean(elevation)), sigma=1)
 
-        min_elevation = np.nanmin(elevation)
-        max_elevation = np.nanmax(elevation)
-        contour_levels = np.arange(min_elevation, max_elevation, interval)
-        print(f"Extracting contours at levels: {contour_levels}")
+        min_elevation, max_elevation = np.nanpercentile(elevation, [2, 98])  # This will exclude the top and bottom 2% of values (outliers probably)
+        contour_levels = np.arange(min_elevation, max_elevation + interval, interval)  # Ensure max elevation is included in the range
+        
+        if contour_levels.size == 0:
+            print("Error: No contour levels could be generated.")
+            return
 
-        contours = plt.contour(elevation, levels=contour_levels, origin='upper', 
-                               extent=[affine.c, affine.c + affine.a * raster_shape[1], 
-                                       affine.f + affine.e * raster_shape[0], affine.f], 
+        print(f"Attempting to generate contours for levels: {contour_levels}")
+
+        contours = plt.contour(elevation, levels=contour_levels, origin='upper',
+                               extent=[affine.c, affine.c + affine.a * elevation.shape[1],
+                                       affine.f + affine.e * elevation.shape[0], affine.f],
                                linestyles='solid')
-        print(f"Contours extracted from {geo_tiff_path}")
-        
-        # Check if none of the contours are touching each other
-        for i, contour_path in enumerate(contours.collections):
-            for path in contour_path.get_paths():
-                line = LineString(path.vertices)
-                if line.is_simple:
-                    continue
-                else:
-                    print(f"Contour {i} is not simple")
-                    break
-     
-        
 
         schema = {'geometry': 'LineString', 'properties': {'elevation': 'float'}}
         with fiona.open(output_gpkg_path, 'w', driver='GPKG', crs=crs, schema=schema) as dst:
-            for i, contour_path in enumerate(contours.collections):
-                for path in contour_path.get_paths():
-                    line = LineString(path.vertices)
-                    # Increase the length threshold for contours near the edge
-                    length_threshold = 5 if is_near_edge(line, affine, raster_shape) else 1
-                    if line.length > length_threshold:
+            for i, contour in enumerate(contours.allsegs):
+                for seg in contour:
+                    if seg.size > 0: # Skip empty segments
+                        line = LineString(seg)
                         feature = {
                             'geometry': mapping(line),
-                            'properties': {'elevation': contour_levels[i]},
+                            'properties': {'elevation': contour_levels[i]}
                         }
                         dst.write(feature)
 
-    print(f"Contours saved to {output_gpkg_path}")
-    return output_gpkg_path
+        print(f"Contours saved to {output_gpkg_path}")
 
 ## Main function
 def main():
     # Use parsed arguments directly
-    print(f"\nProcessing {args.inputfile} to create contours at every meter.\n")
+    print(f"\nProcessing {args.inputfile} to create contours lines.\n")
     
     # Generate contours and save them to a GeoPackage
     extract_and_save_contours(args.inputfile, 'isocontours.gpkg')
