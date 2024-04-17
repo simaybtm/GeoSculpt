@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import rasterio
 from scipy.spatial import cKDTree
-
+from tqdm import tqdm 
 
 '''
 INPUTS:
@@ -66,11 +66,10 @@ def visualize_ok(dtm, x_range, y_range):
     
 ## Function to create a continuous DTM using Ordinary Kriging
 def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy, thinning_factor=10, search_radius_factor=1, max_range_factor=2, no_neighbors=8):
-    print("Starting Ordinary Kriging interpolation...")
 
     # Calculate variance of the dataset 
     variance = np.var(ground_points[:, 2])
-    print(f"Variance of the dataset: {variance}\n")
+    #print(f"Variance of the dataset: {variance}\n")
 
     # Prepare the data
     point_data = np.array(ground_points)
@@ -85,10 +84,10 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     try:
         experimental_semivariogram = build_experimental_variogram(
             input_array=point_data, step_size=search_radius, max_range=max(max_range))
-        print("Experimental semivariogram calculated.")
-        print("EXPERIMENTAL MODEL\n",experimental_semivariogram)
+        #print("Experimental semivariogram calculated.")
+        #print("EXPERIMENTAL MODEL\n",experimental_semivariogram)
     except MemoryError as e:
-        print(f"MemoryError: {e}")
+        #print(f"MemoryError: {e}")
         return None
 
     # Step 3: Fit a theoretical semivariogram model
@@ -97,8 +96,8 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
                                           sill=60, # meters 
                                           rang=300, # meters 
                                           nugget=0)  # meters
-    print("\n\nTheoretical semivariogram model fitted.")
-    print("\nTHEORETICAL MODEL\n",semivar)
+    #print("\n\nTheoretical semivariogram model fitted.")
+    #print("\nTHEORETICAL MODEL\n",semivar)
     
     # Step 4: Perform Ordinary Kriging
     x_coords = np.arange(minx, maxx + resolution, resolution) 
@@ -123,13 +122,41 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
                        transform=transform) as dst:
         dst.write(dtm, 1)
 
-    print("\nDTM saved as dtm_ordinary_kriging.tiff")
     
     # Visualize the DTM created with Ordinary Kriging
-    visualize_ok(dtm, x_coords, y_coords)
+    #visualize_ok(dtm, x_coords, y_coords)
     
     return dtm
     
+def jackknife_rmse_ok(ground_points, resolution, minx, maxx, miny, maxy, sample_size=1000, thinning_factor=10, search_radius_factor=1, max_range_factor=2, no_neighbors=8):
+    if len(ground_points) > sample_size:
+        # Randomly sample points if the dataset is larger than the sample size
+        indices = np.random.choice(len(ground_points), sample_size, replace=False)
+        sample_points = ground_points[indices]
+    else:
+        sample_points = ground_points
+
+    errors = []
+    n = len(sample_points)
+    for i in tqdm(range(n), desc="\nComputing Jackknife RMSE for Ordinary Kriging"):
+        # Exclude the current point
+        subset_points = np.delete(sample_points, i, axis=0)
+        
+        # Re-run your Ordinary Kriging interpolation on the subset
+        dtm = ordinary_kriging_interpolation(subset_points, resolution, minx, maxx, miny, maxy, thinning_factor, search_radius_factor, max_range_factor, no_neighbors)
+        
+        omitted_point = sample_points[i]
+        # Calculate the grid index of the omitted point
+        grid_x_idx = int((omitted_point[0] - minx) / resolution)
+        grid_y_idx = int((omitted_point[1] - miny) / resolution)
+        if 0 <= grid_x_idx < dtm.shape[1] and 0 <= grid_y_idx < dtm.shape[0]:
+            z_estimated = dtm[grid_y_idx, grid_x_idx]
+            if np.isfinite(z_estimated):
+                errors.append((z_estimated - omitted_point[2]) ** 2)
+
+    rmse = np.sqrt(np.mean(errors))
+    return rmse
+
 ## Main function
 def main():
     # Use parsed arguments directly
@@ -152,16 +179,23 @@ def main():
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
         
-        test_ground_non_ground_separation(ground_points, non_ground_points)
-        print(">> Testing CSF complete.\n")
+        #test_ground_non_ground_separation(ground_points, non_ground_points)
+        #print(">> Testing CSF complete.\n")
         
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
         print(">> Ground points saved to ground.laz.\n")
         
+        # Jackknife RMSE computation for Ordinary Kriging
+        print("Starting Jackknife RMSE computation for Ordinary Kriging...")
+        jackknife_rmse_value = jackknife_rmse_ok(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy, sample_size=1000)  # Sample size of 1000 for illustration
+        print(f"Jackknife RMSE for Ordinary Kriging: {jackknife_rmse_value}")
+
         ## Step 2: Ordinary Kriging
         # Perform Ordinary Kriging to create a continuous DTM
+        print("\nStarting Ordinary Kriging interpolation...")
         dtm = ordinary_kriging_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
+        print("\nDTM saved as dtm_ordinary_kriging.tiff")
         print(">> Ordinary Kriging interpolation complete.\n")
         
         # if DTM is saved, print message
