@@ -17,6 +17,9 @@ The project is structured around several key steps:
   ![pic 2](https://github.com/simaybtm/DTM_creation/assets/72439800/d5c499c3-e52f-4a69-b977-ed8c48a212de)
 
 3. **Comparison of DTMs**: Compares the DTMs generated through Laplace interpolation and Ordinary Kriging with each other and with an official AHN4 DTM raster.
+
+  ![pic3](https://github.com/simaybtm/DTM_creation/assets/72439800/7b5b53bf-e62e-474b-8ba0-57720f2b770c)
+
 4. **Visualization with Iso-Contours**: Implements an algorithm to generate iso-contours from the DTM for visualization purposes.
 
 ### The Dataset
