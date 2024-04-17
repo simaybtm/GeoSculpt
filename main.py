@@ -1,12 +1,8 @@
 '''
-In this assignment you need to:
-
     1. automatically classify a 300mX300m region of the AHN4 point cloud into ground and non-ground using the CSF algorithm
     2. make a raster DTM using both kriging and Laplace interpolation
     3. compare your DTM rasters with the official AHN4 DTM raster
     4. to help with visualisation you’ll have to implement a contouring algorithm
-
-You have to use the following Python libraries (others are not accepted, or ask me first): numpy, startinpy, pyinterpolate, rasterio, scipy, laspy, fiona, shapely.
 '''
 
 import step4
