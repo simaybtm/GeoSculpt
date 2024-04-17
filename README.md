@@ -9,9 +9,11 @@ This repository contains a Python project developed as part of the Geomatics mas
 The project is structured around several key steps:
 
 1. **Ground Filtering and DTM Creation with Laplace Interpolation**: Implements the Cloth Simulation Filter (CSF) algorithm to classify ground points and generates a DTM using Laplace interpolation.
+
   ![Picture1](https://github.com/simaybtm/DTM_creation/assets/72439800/30c4bd57-c335-4089-abe3-0c2b6914a59b)
 
 2. **DTM Creation with Ordinary Kriging (OK)**: Uses the ground points classified in step 1 to create a DTM using Ordinary Kriging interpolation.
+ 
   ![pic 2](https://github.com/simaybtm/DTM_creation/assets/72439800/d5c499c3-e52f-4a69-b977-ed8c48a212de)
 
 3. **Comparison of DTMs**: Compares the DTMs generated through Laplace interpolation and Ordinary Kriging with each other and with an official AHN4 DTM raster.
