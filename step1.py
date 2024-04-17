@@ -14,6 +14,9 @@ import argparse
 import math
 import matplotlib.pyplot as plt # testing output
 from mpl_toolkits.mplot3d import Axes3D # testing output
+from tqdm import tqdm # Loading bar to assess time of execution
+from sklearn.metrics import mean_squared_error # testing output
+
 
 '''
 INPUTS:
@@ -24,7 +27,7 @@ miny	    miny of the bbox for which we want to obtain the DTM
 maxx	    maxx of the bbox for which we want to obtain the DTM
 maxy	    maxy of the bbox for which we want to obtain the DTM
 res	        DTM resolution in meters
-csf_res	    resolution in meters for the CSF grid to use
+csf_res	    resolution in meters for the CSF grid to use 
 epsilon	    used for classifying the points as ground if they are within "epsilon" distance of the cloth in its final position
 
 OUTPUTS:
@@ -303,6 +306,28 @@ def save_ground_points_las(ground_points, filename="ground.laz"):
     else:
         print("No ground points found after CSF classification.")
 
+def jackknife_rmse_laplace(ground_points, minx, maxx, miny, maxy, resolution):
+    errors = []
+    n = len(ground_points)
+    for i in tqdm(range(n), desc="Computing Jackknife RMSE for Laplace Interpolation"):
+        # Exclude the current point
+        subset_points = np.delete(ground_points, i, axis=0)
+        
+        # Re-run your Laplace interpolation on the subset
+        dtm = laplace_interpolation(subset_points, minx, maxx, miny, maxy, resolution)
+        
+        omitted_point = ground_points[i]
+        # Estimate z-value at the omitted point's location
+            # Assuming the dtm grid aligns exactly with your point locations, which might not always be the case
+        grid_x_idx = int((omitted_point[0] - minx) / resolution)
+        grid_y_idx = int((omitted_point[1] - miny) / resolution)
+        if 0 <= grid_x_idx < dtm.shape[1] and 0 <= grid_y_idx < dtm.shape[0]:  # Check bounds
+            z_estimated = dtm[grid_y_idx, grid_x_idx]
+            if np.isfinite(z_estimated):  # Ensure estimated value is not NaN
+                errors.append((z_estimated - omitted_point[2]) ** 2)
+
+    rmse = np.sqrt(np.mean(errors))
+    return rmse
 ### Step 2: Laplace Interpolation
 ## (TESTING) Function to check if Laplace interpolation is working correctly (visualize with matplotlib)
 def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
@@ -361,9 +386,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
                        count=1, dtype=str(dtm.dtype), crs='EPSG:4326',
                        transform=transform) as dst:
         dst.write(dtm, 1)
-
-    print("\nDTM saved as dtm_laplace.tiff")
-
+        
     return dtm
 
 ## Main function
@@ -390,8 +413,17 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
         
-        test_ground_non_ground_separation(ground_points, non_ground_points)
-        print(">> Testing CSF complete.\n")
+        sample_size = min(1000, len(ground_points))  # Using 1000 or fewer if less available
+        if sample_size > 0:
+            sample_indices = np.random.choice(len(ground_points), size=sample_size, replace=False)
+            sampled_ground_points = ground_points[sample_indices]
+            print("Starting Jackknife RMSE computation...")
+            rmse = jackknife_rmse_laplace(sampled_ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+            print(f"Jackknife RMSE for Laplace interpolation: {rmse}")
+            print(">> Jackknife RMSE computation complete.\n")
+            
+        #test_ground_non_ground_separation(ground_points, non_ground_points)
+        #print(">> Testing CSF complete.\n")
         
         # Save the ground points in a file called ground.laz
         save_ground_points_las(ground_points)
@@ -400,6 +432,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         ## Step 2: Laplace Interpolation
         # Laplace interpolation to create a continuous DTM
         dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+        print("\nDTM saved as dtm_laplace.tiff")
         print(">> Laplace interpolation complete.\n")
         
         # Visualize or save the filtered DTM
