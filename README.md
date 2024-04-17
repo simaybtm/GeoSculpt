@@ -1,4 +1,4 @@
-# DTM_creation
+# GeoSculpt: Terrain data
 
 ## Point Clouds, DTMs, and Visualisation
 
