@@ -118,7 +118,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     transform = from_origin(minx, maxy, resolution, -resolution)
     with rasterio.open('dtm_ordinary_kriging.tiff', 'w', driver='GTiff',
                        height=dtm.shape[0], width=dtm.shape[1],
-                       count=1, dtype=str(dtm.dtype), crs='EPSG:4326',
+                       count=1, dtype=str(dtm.dtype), crs='EPSG:28992', # Dutch National Grid (Amersfoort / RD New)--> EPSG:28992
                        transform=transform) as dst:
         dst.write(dtm, 1)
 
