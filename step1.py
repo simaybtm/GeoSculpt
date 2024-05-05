@@ -90,7 +90,7 @@ def get_valid_neighbors(i, j, z_grid, check_above=False):
 
 
 ## Function to implement the Cloth Simulation Filter algorithm (CSF)
-def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, delta_z_threshold=0.01):    
+def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, delta_z_threshold=0.01):    
     print("Running Cloth Simulation Filter algorithm...")
 
     """
@@ -176,15 +176,13 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=100, de
     plt.show()           
     
     # Show cloth surface after simulation
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(15, 10))  
     ax = fig.add_subplot(111, projection='3d')
-    X, Y = np.meshgrid(np.linspace(x_min, x_max, z_grid.shape[1]), np.linspace(y_min, y_max, z_grid.shape[0]))
-    surf = ax.plot_surface(X, Y, z_grid, cmap='viridis', edgecolor='none')
-    ax.set_title('Final Cloth Surface After Simulation')
-    ax.set_xlabel('X Coordinate')
-    ax.set_ylabel('Y Coordinate')
-    ax.set_zlabel('Cloth Height (Z Coordinate)')
-    fig.colorbar(surf, shrink=0.5, aspect=5)
+    ax.plot_surface(x_grid, y_grid, z_grid, cmap='terrain', edgecolor='none')
+    ax.set_title('Cloth Surface after Simulation')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
     plt.show()
 
     # Show number of ground and non-ground points
