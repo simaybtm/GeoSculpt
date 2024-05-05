@@ -79,7 +79,51 @@ def thin_pc(pointcloud, thinning_value):
     thinned_pointcloud = pointcloud[::thinning_value]  
     print(f" Number of points before thinning: {pointcloud.shape[0]}")
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
+
+    # Plot the thinned point cloud in 3D (_1_)
+    """
+    plt.figure(figsize=(15, 10))
+    ax = plt.axes(projection='3d')
+    ax.scatter(thinned_pointcloud[:, 0], thinned_pointcloud[:, 1], thinned_pointcloud[:, 2], c='blue', s=1)
+    ax.set_title('Thinned Point Cloud')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show() 
+    """
+    
     return thinned_pointcloud
+
+# Function to detect and remove outliers using k-Nearest Neighbors
+def knn_outlier_removal(thinned_pointcloud, k):
+    print("Detecting and removing outliers...")
+    # Calculate the technical information
+    min_x, max_x = np.min(thinned_pointcloud[:, 0]), np.max(thinned_pointcloud[:, 0])
+    min_y, max_y = np.min(thinned_pointcloud[:, 1]), np.max(thinned_pointcloud[:, 1])
+    min_z, max_z = np.min(thinned_pointcloud[:, 2]), np.max(thinned_pointcloud[:, 2])
+
+    area_width = max_x - min_x
+    area_height = max_y - min_y
+    height_difference = max_z - min_z
+
+    print(f"Parcel size: {area_width:.2f} m x {area_height:.2f} m")
+    print(f"Height difference from min to max point is {height_difference:.2f} meters")
+
+    # Build KDTree for efficient neighbor search
+    tree = cKDTree(thinned_pointcloud[:, :2])  # Use only X, Y for spatial queries
+
+    # Compute the distances to the k-th nearest neighbor
+    distances, _ = tree.query(thinned_pointcloud[:, :2], k=k + 1)  # k+1 because the point itself is included
+    knn_distances = distances[:, k]  # We take the k-th nearest distance
+
+    # Define threshold for outlier detection
+    threshold = np.mean(knn_distances) + 2 * np.std(knn_distances)
+
+    # Filter points where the k-th nearest neighbor is within the threshold
+    non_outliers = thinned_pointcloud[knn_distances < threshold]
+
+    print(f"Removed {len(thinned_pointcloud) - len(non_outliers)} outliers.")
+    return non_outliers
 
 # (USED in CSF) Function to get the valid neighbors of a grid point
 def get_valid_neighbors(i, j, z_grid, check_above=False):
@@ -88,96 +132,85 @@ def get_valid_neighbors(i, j, z_grid, check_above=False):
         directions.append((0, 1))  
     return [z_grid[i + di, j + dj] for di, dj in directions if 0 <= i + di < z_grid.shape[0] and 0 <= j + dj < z_grid.shape[1]]
 
-
 ## Function to implement the Cloth Simulation Filter algorithm (CSF)
-def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, delta_z_threshold=0.01):    
+def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations=None):
     print("Running Cloth Simulation Filter algorithm...")
 
-    """
-    The "max_iterations" parameter controls the maximum number of iterations for the simulation.
-    The "delta_z_threshold" parameter controls the threshold for the maximum change in z values. 
-    """
-    
-    if pointcloud.size == 0:
+    if thinned_pointcloud.size == 0:
         print("ERROR: Empty point cloud after filtering or thinning! Aborting CSF.")
         return np.array([]), np.array([])
 
-    max_z = np.max(pointcloud[:, 2])
-    inverted_pointcloud = pointcloud.copy()
-    inverted_pointcloud[:, 2] = max_z - pointcloud[:, 2]
+    max_z = np.max(thinned_pointcloud[:, 2])
+    inverted_pointcloud = thinned_pointcloud.copy()
+    inverted_pointcloud[:, 2] = max_z - thinned_pointcloud[:, 2]
+    print("     Inversion of terrain successful.")
 
-    # Check if inversion was successful
-    if np.array_equal(inverted_pointcloud, pointcloud):
-        print(" Inversion failed. Aborting CSF.")
-        return np.array([]), np.array([])
-    else:
-        print(" Inversion of terrain successful.") 
-        
+    # Find the highest points in the inverted point cloud to initialize the grid higher than the max z value
+    max_z = np.max(inverted_pointcloud[:, 2])
+    print(f"        Max Z: {max_z} thus initializing the grid higher than the max z value by 10 units (initial_z = max_z + 10).")
+    initial_z = max_z + 10
+
     # Use KDTree for efficient nearest neighbor search
-    kd_tree = cKDTree(inverted_pointcloud[:, :2])  
-    
+    kd_tree = cKDTree(inverted_pointcloud[:, :2])
+
     # Initializing the cloth/grid
-    x_grid, y_grid = np.meshgrid(np.arange(np.min(pointcloud[:, 0]), np.max(pointcloud[:, 0]), csf_res),
-                                 np.arange(np.min(pointcloud[:, 1]), np.max(pointcloud[:, 1]), csf_res))
-    z_grid = np.full(x_grid.shape, max_z + 30) # Initialize the grid 30 units above the max z value
-    print(f"    Cloth initilized with shape: {z_grid.shape}")
-    
-    # Show "grid/cloth" points above the inverted point cloud
-    # fig = plt.figure(figsize=(15, 10))
-    # ax = fig.add_subplot(111, projection='3d')
-    # ax.scatter(inverted_pointcloud[:, 0], inverted_pointcloud[:, 1], inverted_pointcloud[:, 2], c='blue', label='Inverted Point Cloud', s=1)
-    # ax.scatter(x_grid, y_grid, z_grid, c='red', label='Grid Points', s=1)
-    # ax.set_title('Inverted Point Cloud and Grid/Cloth Points')
-    # ax.set_xlabel('X')
-    # ax.set_ylabel('Y')
-    # ax.set_zlabel('Z')
-    # ax.legend()
-    # plt.show()
-    
-    print("    Starting the cloth simulation process...")
-    # Simulating the cloth falling process + classifying points
-    iteration = 0
-    while iteration < max_iterations:
-        max_change = 0 
-        for i in range(z_grid.shape[0]): # Loop through the grid points
-            for j in range(z_grid.shape[1]): 
-                dist, idx = kd_tree.query([x_grid[i, j], y_grid[i, j]])
-                closest_z = max_z - inverted_pointcloud[idx, 2] # Inverting back to original z value
-                neighbors = get_valid_neighbors(i, j, z_grid)   
-                new_z = min(closest_z + epsilon, np.mean(neighbors)) if neighbors else closest_z + epsilon  # Update z value
-                change = abs(z_grid[i, j] - new_z)
-                z_grid[i, j] = new_z 
-                max_change = max(max_change, change) 
-        if max_change < delta_z_threshold: # Check if the maximum change is below the threshold
-            break
-        iteration += 1
-        print(f"    Iteration {iteration}: Max Change = {max_change}") # max_change is the maximum change in z values
-    
-    # Classifying points
-    """
-    The epsilon parameter is used to classify points as ground or non-ground based on their z values. If for a point p, 
-    abs(p.z - z_grid[p.x, p.y]) <= epsilon, it is classified as ground; otherwise, it is classified as non-ground.
-    """
-    ground_points = np.array([point for point in pointcloud if abs(point[2] - z_grid[int((point[1] - np.min(pointcloud[:, 1])) / csf_res),
-                                                                            int((point[0] - np.min(pointcloud[:, 0])) / csf_res)]) <= epsilon])
-    non_ground_points = np.array([point for point in pointcloud if abs(point[2] - z_grid[int((point[1] - np.min(pointcloud[:, 1])) / csf_res),
-                                                                                int((point[0] - np.min(pointcloud[:, 0])) / csf_res)]) > epsilon])
+    x_grid, y_grid = np.meshgrid(
+        np.arange(np.min(thinned_pointcloud[:, 0]), np.max(thinned_pointcloud[:, 0]), csf_res),
+        np.arange(np.min(thinned_pointcloud[:, 1]), np.max(thinned_pointcloud[:, 1]), csf_res)
+    )
+    z_grid = np.full(x_grid.shape, initial_z) 
+
+    # If max_iterations is not set, dynamically compute it as 75% of the total number of thinned points
+    if not max_iterations:
+        max_iterations = int(0.75 * len(thinned_pointcloud))
+        print(f"        Dynamically setting max_iterations to 75% of total thinned points: {max_iterations} / {len(thinned_pointcloud)}")
+
+    # Simulating the cloth falling process
+    with tqdm(total=max_iterations, desc="  Cloth Simulation Filter Progress") as pbar:
+        for iteration in range(max_iterations):
+            for i in range(z_grid.shape[0]):
+                for j in range(z_grid.shape[1]):
+                    dist, idx = kd_tree.query([x_grid[i, j], y_grid[i, j]], k=1)
+                    closest_z = max_z - inverted_pointcloud[idx, 2]
+                    neighbors = get_valid_neighbors(i, j, z_grid)
+                    if neighbors:
+                        z_grid[i, j] = (closest_z + epsilon + np.mean(neighbors)) / 2 # Average of closest_z + epsilon and neighbors
+                    else:
+                        z_grid[i, j] = closest_z + epsilon # No neighbors, set to closest_z + epsilon
+            pbar.update(1)
+
+    # Classifying points as ground or non-ground
+    ground_points = []
+    non_ground_points = []
+    for point in thinned_pointcloud:
+        grid_x_idx = int((point[0] - np.min(thinned_pointcloud[:, 0])) / csf_res)
+        grid_y_idx = int((point[1] - np.min(thinned_pointcloud[:, 1])) / csf_res)
+        cloth_z = z_grid[grid_y_idx, grid_x_idx]
+        if np.abs(point[2] - cloth_z) <= epsilon:
+            ground_points.append(point)
+        else:
+            non_ground_points.append(point)
+
+    ground_points = np.array(ground_points)
+    non_ground_points = np.array(non_ground_points)
 
     ## PLOTS    
-    # Show cloth points after the simulation
+    # Show cloth points after the simulation (_2_)
+    """ 
     fig = plt.figure(figsize=(15, 10))
     ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(inverted_pointcloud[:, 0], inverted_pointcloud[:, 1], inverted_pointcloud[:, 2], c='blue', label='Inverted Point Cloud', s=1)
-    ax.scatter(x_grid, y_grid, z_grid, c='red', label='Grid Points', s=1)
-    ax.set_title('Inverted Point Cloud and Grid/Cloth Points')
+    ax.scatter(thinned_pointcloud[:, 0], thinned_pointcloud[:, 1], thinned_pointcloud[:, 2], c='blue', label='Thinned Points', s=1)
+    ax.scatter(x_grid, y_grid, z_grid, c='red', label='Cloth Points', s=1)
+    ax.set_title('Cloth Points after Simulation')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     ax.legend()
-    plt.show()           
-    
-    # Show cloth surface after simulation
-    fig = plt.figure(figsize=(15, 10))  
+    plt.show()     
+    """
+    # Show cloth surface after simulation (_3_)
+    """
+    fig = plt.figure(figsize=(15, 10))
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_surface(x_grid, y_grid, z_grid, cmap='terrain', edgecolor='none')
     ax.set_title('Cloth Surface after Simulation')
@@ -185,6 +218,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     plt.show()
+    """
 
     # Show number of ground and non-ground points
     print(f"    Number of ground points: {len(ground_points)}")
@@ -209,7 +243,6 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
     else:
         print("    No shared points found between ground and non-ground points!")
 
-    
     return ground_points, non_ground_points
 
 ## (TESTING) Function to visualize the separation between ground and non-ground points
@@ -231,8 +264,8 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     print(f"        Standard Deviation Z: {np.std(ground_points[:, 2])}")
     print(f"        Min Z: {np.min(ground_points[:, 2])}")
     print(f"        Max Z: {np.max(ground_points[:, 2])}\n")
-    
-    # Plot ground points and non-ground points in 3D (green: ground, red: non-ground)
+
+    # Plot ground points and non-ground points in 3D (green: ground, red: non-ground) (_4_)
     fig = plt.figure(figsize=(15, 10))  
     ax = fig.add_subplot(111, projection='3d')
     ax.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
@@ -244,7 +277,7 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     ax.legend()
     plt.show()
     
-    # Plot non-ground points and ground points on separate subplots (3D)
+    # Plot non-ground points and ground points on separate subplots (3D) (_5_)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 10), subplot_kw={'projection': '3d'})
     ax1.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
     ax1.set_title('Ground Points')
@@ -260,7 +293,7 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     ax2.legend()
     plt.show()
     
-    # Plot non-ground points and ground points on separate subplots (2D)
+    # Plot non-ground points and ground points on separate subplots (2D) (_6_)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 10))
     ax1.scatter(ground_points[:, 0], ground_points[:, 1], c='green', label='Ground Points', s=1)
     ax1.set_title('Ground Points')
@@ -353,8 +386,6 @@ def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
     ax.set_zlabel('Elevation')
     plt.show()
 
-    
-
 ## Function to create a continuous DTM using Laplace interpolation
 def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     dt = startinpy.DT()
@@ -441,9 +472,13 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         return
     if pointcloud is not None:
         print(">> Point cloud read successfully.\n")
-        thinned_pc = thin_pc(pointcloud, 10)
+        # Thinning
+        thinned_pc = thin_pc(pointcloud, 10) # every 10th point
         print(">> Point cloud thinned.\n")
-
+        # Outlier removal
+        thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
+        print(">> Outliers removed.\n")
+        # Ground filtering with CSF
         ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
         print (">> Ground points classified with CSF algorithm.\n")
             
