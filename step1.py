@@ -70,13 +70,25 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
         print(f"An error occurred: {e}")
         return None
 
-## Function to thin the point cloud by half
-def thin_pc(pointcloud, thinning_value):
+# Function to thin the point cloud 
+def thin_pc(pointcloud, thinning_percentage):
     print("Thinning the point cloud...")
-    # Ensure thinning_value is an integer and greater than 0 to avoid errors
-    if not isinstance(thinning_value, int) or thinning_value <= 0:
-        raise ValueError("Thinning value must be an integer greater than 0.")
-    thinned_pointcloud = pointcloud[::thinning_value]  
+    if thinning_percentage <= 0 or thinning_percentage >= 100:
+        raise ValueError("Thinning percentage must be between 0 and 100 (exclusive).")
+
+    # Calculate the number of points to keep based on the percentage
+    num_points_to_keep = int(len(pointcloud) * (thinning_percentage / 100.0))
+    
+    # Ensure at least one point is kept
+    num_points_to_keep = max(num_points_to_keep, 1)
+    
+    # Calculate the step size to achieve the desired thinning percentage
+    step_size = len(pointcloud) // num_points_to_keep
+
+    # Thinning by selecting points at regular intervals
+    thinned_pointcloud = pointcloud[::step_size]  
+    
+    print(f" Thinning percentage: {thinning_percentage}%")
     print(f" Number of points before thinning: {pointcloud.shape[0]}")
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
 
@@ -94,20 +106,10 @@ def thin_pc(pointcloud, thinning_value):
     
     return thinned_pointcloud
 
+
 # Function to detect and remove outliers using k-Nearest Neighbors
 def knn_outlier_removal(thinned_pointcloud, k):
     print("Detecting and removing outliers...")
-    # Calculate the technical information
-    min_x, max_x = np.min(thinned_pointcloud[:, 0]), np.max(thinned_pointcloud[:, 0])
-    min_y, max_y = np.min(thinned_pointcloud[:, 1]), np.max(thinned_pointcloud[:, 1])
-    min_z, max_z = np.min(thinned_pointcloud[:, 2]), np.max(thinned_pointcloud[:, 2])
-
-    area_width = max_x - min_x
-    area_height = max_y - min_y
-    height_difference = max_z - min_z
-
-    print(f"Parcel size: {area_width:.2f} m x {area_height:.2f} m")
-    print(f"Height difference from min to max point is {height_difference:.2f} meters")
 
     # Build KDTree for efficient neighbor search
     tree = cKDTree(thinned_pointcloud[:, :2])  # Use only X, Y for spatial queries
@@ -122,7 +124,7 @@ def knn_outlier_removal(thinned_pointcloud, k):
     # Filter points where the k-th nearest neighbor is within the threshold
     non_outliers = thinned_pointcloud[knn_distances < threshold]
 
-    print(f"Removed {len(thinned_pointcloud) - len(non_outliers)} outliers.")
+    print(f" Removed {len(thinned_pointcloud) - len(non_outliers)} outliers.")
     return non_outliers
 
 # (USED in CSF) Function to get the valid neighbors of a grid point
@@ -137,17 +139,18 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations
     print("Running Cloth Simulation Filter algorithm...")
 
     if thinned_pointcloud.size == 0:
-        print("ERROR: Empty point cloud after filtering or thinning! Aborting CSF.")
+        print(" ERROR: Empty point cloud after filtering or thinning! Aborting CSF.")
         return np.array([]), np.array([])
 
     max_z = np.max(thinned_pointcloud[:, 2])
     inverted_pointcloud = thinned_pointcloud.copy()
     inverted_pointcloud[:, 2] = max_z - thinned_pointcloud[:, 2]
-    print("     Inversion of terrain successful.")
+    print(" Inversion of terrain successful.")
 
     # Find the highest points in the inverted point cloud to initialize the grid higher than the max z value
     max_z = np.max(inverted_pointcloud[:, 2])
-    print(f"        Max Z: {max_z} thus initializing the grid higher than the max z value by 10 units (initial_z = max_z + 10).")
+    print(f" Max Z: {max_z}")
+    print(" Initializing the grid higher than the max z value by 10 units (initial_z = max_z + 10).")
     initial_z = max_z + 10
 
     # Use KDTree for efficient nearest neighbor search
@@ -163,10 +166,11 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations
     # If max_iterations is not set, dynamically compute it as 75% of the total number of thinned points
     if not max_iterations:
         max_iterations = int(0.75 * len(thinned_pointcloud))
-        print(f"        Dynamically setting max_iterations to 75% of total thinned points: {max_iterations} / {len(thinned_pointcloud)}")
+        print("\n Max iterations not set.")
+        print(f" Dynamically setting max_iterations to 75% of total thinned points: {max_iterations} / {len(thinned_pointcloud)}")
 
     # Simulating the cloth falling process
-    with tqdm(total=max_iterations, desc="  Cloth Simulation Filter Progress") as pbar:
+    with tqdm(total=max_iterations, desc="  CSF Progress") as pbar:
         for iteration in range(max_iterations):
             for i in range(z_grid.shape[0]):
                 for j in range(z_grid.shape[1]):
@@ -221,7 +225,7 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations
     """
 
     # Show number of ground and non-ground points
-    print(f"    Number of ground points: {len(ground_points)}")
+    print(f"\n    Number of ground points: {len(ground_points)}")
     print(f"    Number of non-ground points: {len(non_ground_points)}")
 
     # Number of shared points (must be zero)
@@ -241,7 +245,7 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations
         plt.show()
 
     else:
-        print("    No shared points found between ground and non-ground points!")
+        print("\n    No shared points found between ground and non-ground points!")
 
     return ground_points, non_ground_points
 
@@ -468,11 +472,11 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         print(">> Point cloud read successfully.\n")
 
     # 1. Thinning
-    thinned_pc = thin_pc(pointcloud, 10) # every 10th point
+    thinned_pc = thin_pc(pointcloud, 50) # thinning percentage (0-100)
     print(">> Point cloud thinned.\n")
     # 2. Outlier removal
     thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
-    print(">> Outliers removed.\n")
+    print(">> Outliers removed succesfully.\n")
     # 3. Ground filtering with CSF
     ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
     print (">> Ground points classified with CSF algorithm.\n")
@@ -495,6 +499,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
 
     # 7. Visualize the filtered DTM
     visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    print("Shape of the DTM: ", dtm.shape)
     print(">> Laplace interpolation complete.\n")
 
     # 8. Save the ground points in a file called ground.laz
