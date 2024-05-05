@@ -152,6 +152,7 @@ def cloth_simulation_filter(pointcloud, csf_res, epsilon, max_iterations=900, de
             break
         iteration += 1
         print(f"    Iteration {iteration}: Max Change = {max_change}") # max_change is the maximum change in z values
+    
     # Classifying points
     """
     The epsilon parameter is used to classify points as ground or non-ground based on their z values. If for a point p, 
