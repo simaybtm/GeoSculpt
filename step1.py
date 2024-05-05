@@ -341,15 +341,9 @@ def jackknife_rmse_laplace(ground_points, minx, maxx, miny, maxy, resolution):
     errors = []
     n = len(ground_points)
     for i in tqdm(range(n), desc="Computing Jackknife RMSE for Laplace Interpolation"):
-        # Exclude the current point
-        subset_points = np.delete(ground_points, i, axis=0)
-        
-        # Re-run your Laplace interpolation on the subset
-        dtm = laplace_interpolation(subset_points, minx, maxx, miny, maxy, resolution)
-        
+        subset_points = np.delete(ground_points, i, axis=0)  # Exclude the current point
+        dtm = laplace_interpolation(subset_points, minx, maxx, miny, maxy, resolution)  # Re-run Laplace interpolation
         omitted_point = ground_points[i]
-        # Estimate z-value at the omitted point's location
-            # Assuming the dtm grid aligns exactly with your point locations, which might not always be the case
         grid_x_idx = int((omitted_point[0] - minx) / resolution)
         grid_y_idx = int((omitted_point[1] - miny) / resolution)
         if 0 <= grid_x_idx < dtm.shape[1] and 0 <= grid_y_idx < dtm.shape[0]:  # Check bounds
@@ -437,7 +431,6 @@ def interpolate_z_value(dt, x, y, hull):
         return weighted_barycentric_interpolate(x, y, vertices, hull)
     return np.nan
 
-
 ## (USED in interpolate_z_value) Function to interpolate the z value using barycentric coordinates
 def weighted_barycentric_interpolate(x, y, vertices, hull):
     x1, y1, z1 = vertices[0]
@@ -465,50 +458,48 @@ def main():
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
 maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon} \n")
 
-    ## Step 1: Ground filtering with CSF
+    #------ Step 1: Ground filtering with CSF ------
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
     if pointcloud is None or pointcloud.size == 0:
         print("No points found within the specified bounding box.")
+        # Terminating the program if no points are found
         return
-    if pointcloud is not None:
+    else:
         print(">> Point cloud read successfully.\n")
-        # Thinning
-        thinned_pc = thin_pc(pointcloud, 10) # every 10th point
-        print(">> Point cloud thinned.\n")
-        # Outlier removal
-        thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
-        print(">> Outliers removed.\n")
-        # Ground filtering with CSF
-        ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
-        print (">> Ground points classified with CSF algorithm.\n")
-            
-        #test_ground_non_ground_separation(ground_points, non_ground_points)
-        # Only show ground points
-        fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
-        ax.set_title('Ground Points')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.legend()
-        plt.show()
 
-        ## Step 2: Laplace Interpolation
-        if ground_points.size == 0:
-            print("No valid ground points found. Exiting...")
-            return  
-        
-        dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
-        print("DTM created and saved as dtm_laplace.tiff.")
+    # 1. Thinning
+    thinned_pc = thin_pc(pointcloud, 10) # every 10th point
+    print(">> Point cloud thinned.\n")
+    # 2. Outlier removal
+    thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
+    print(">> Outliers removed.\n")
+    # 3. Ground filtering with CSF
+    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
+    print (">> Ground points classified with CSF algorithm.\n")
+    # 4. Testing ground and non-ground points
+    #test_ground_non_ground_separation(ground_points, non_ground_points)
+    #print(">> Testing ground and non-ground points complete.\n")
 
-        # Visualize the filtered DTM
-        visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
-        print(">> Laplace interpolation complete.\n")
+     #------ Step 2: Laplace Interpolation ------
+    if ground_points.size == 0:
+        print("No valid ground points found. Exiting program...")
+        return  
+    # 5. Laplace
+    dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    print("DTM created and saved as dtm_laplace.tiff.")
 
-        # Save the ground points in a file called ground.laz
-        save_ground_points_las(ground_points)
-        print(">> Ground points saved to ground.laz.\n")
+    # 6. Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
+    jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
+    print(">> Jackknife RMSE computed.\n")
+
+    # 7. Visualize the filtered DTM
+    visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    print(">> Laplace interpolation complete.\n")
+
+    # 8. Save the ground points in a file called ground.laz
+    save_ground_points_las(ground_points)
+    print(">> Ground points saved to ground.laz.\n")
     
     print("\nStep 1 completed!\n\n")   
 
