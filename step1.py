@@ -29,7 +29,7 @@ minx	    minx of the bbox for which we want to obtain the DTM
 miny	    miny of the bbox for which we want to obtain the DTM
 maxx	    maxx of the bbox for which we want to obtain the DTM
 maxy	    maxy of the bbox for which we want to obtain the DTM
-res	        DTM resolution in meters
+res	        DTM resolution in meters 
 csf_res	    resolution in meters for the CSF grid to use 
 epsilon	    used for classifying the points as ground if they are within "epsilon" distance of the cloth in its final position
 
@@ -165,8 +165,8 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations
     # If max_iterations is not set, dynamically compute it as 75% of the total number of thinned points
     if not max_iterations:
         max_iterations = int(0.75 * len(thinned_pointcloud))
-        print("\n Max iterations not set.")
-        print(f" Dynamically setting max_iterations to 75% of total thinned points: {max_iterations} / {len(thinned_pointcloud)}")
+        print("\n Max iterations not set. Using default 'dynamic' setting.")
+        print(f" Dynamically setting 'max_iterations' to 75% of total thinned points: {max_iterations} / {len(thinned_pointcloud)}")
 
     # Simulating the cloth falling process
     with tqdm(total=max_iterations, desc="  CSF Progress") as pbar:
