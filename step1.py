@@ -50,7 +50,7 @@ parser.add_argument('csf_res', type=float, help='Resolution in meters for the CS
 parser.add_argument('epsilon', type=float, help='Threshold in meters to classify the ground')
 args = parser.parse_args()
 
-### Step 1: Ground filtering with CSF
+### --------------- Step 1: Ground filtering with CSF ---------------
 ## Read LAS file with laspy and filter points by bounds
 def read_las(file_path, min_x, max_x, min_y, max_y):
     try:
@@ -69,7 +69,7 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
         print(f"An error occurred: {e}")
         return None
 
-# Function to thin the point cloud 
+## Function to thin the point cloud 
 def thin_pc(pointcloud, thinning_percentage):
     print("Thinning the point cloud...")
     if thinning_percentage <= 0 or thinning_percentage >= 100:
@@ -91,8 +91,19 @@ def thin_pc(pointcloud, thinning_percentage):
     print(f" Number of points before thinning: {pointcloud.shape[0]}")
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
 
-    # Plot the thinned point cloud in 3D (_1_)
+    ## PLOTS
     """
+    # Plot the original point cloud in 3D (_0_)
+    plt.figure(figsize=(15, 10))
+    ax = plt.axes(projection='3d')
+    ax.scatter(pointcloud[:, 0], pointcloud[:, 1], pointcloud[:, 2], c='blue', s=1)
+    ax.set_title('Original Point Cloud')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show()
+
+    # Plot the thinned point cloud in 3D (_1_)
     plt.figure(figsize=(15, 10))
     ax = plt.axes(projection='3d')
     ax.scatter(thinned_pointcloud[:, 0], thinned_pointcloud[:, 1], thinned_pointcloud[:, 2], c='blue', s=1)
@@ -102,11 +113,9 @@ def thin_pc(pointcloud, thinning_percentage):
     ax.set_zlabel('Z')
     plt.show() 
     """
-    
     return thinned_pointcloud
 
-
-# Function to detect and remove outliers using k-Nearest Neighbors
+## Function to detect and remove outliers using k-Nearest Neighbors
 def knn_outlier_removal(thinned_pointcloud, k):
     print("Detecting and removing outliers...")
 
@@ -126,127 +135,97 @@ def knn_outlier_removal(thinned_pointcloud, k):
     print(f" Removed {len(thinned_pointcloud) - len(non_outliers)} outliers.")
     return non_outliers
 
-# (USED in CSF) Function to get the valid neighbors of a grid point
-def get_valid_neighbors(i, j, z_grid, check_above=False):
-    directions = [(-1, 0), (1, 0), (0, -1)] # Left, Right, Down
-    if check_above:
-        directions.append((0, 1))  
-    return [z_grid[i + di, j + dj] for di, dj in directions if 0 <= i + di < z_grid.shape[0] and 0 <= j + dj < z_grid.shape[1]]
+## (USED in CSF) Function to run the Cloth Simulation Filter algorithm
+class Vertex:
+    def __init__(self, position, z_min, z_initial):
+        self.position = position
+        self.z = z_initial  # Start from an initial height 
+        self.z_min = z_min
+        self.previous_z = self.z
+    # Update the z value of the vertex based on the displacement
+    def update(self, displacement):
+        new_z = self.z + displacement
+        if new_z < self.z_min:
+            new_z = self.z_min
+        self.previous_z, self.z = self.z, new_z
 
-## Function to implement the Cloth Simulation Filter algorithm (CSF)
-def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, max_iterations=None):
+class Edge:
+    def __init__(self, vertex_a, vertex_b):
+        self.vertex_a = vertex_a
+        self.vertex_b = vertex_b
+
+    def relax(self):
+        # A spring system where the edge tries to keep vertices at the average of their heights
+        target_z = (self.vertex_a.z + self.vertex_b.z) / 2
+        self.vertex_a.update((target_z - self.vertex_a.z) * 0.5)
+        self.vertex_b.update((target_z - self.vertex_b.z) * 0.5)
+
+## Function to run the Cloth Simulation Filter algorithm 
+def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, eps_z, max_iterations=10000):
     print("Running Cloth Simulation Filter algorithm...")
 
     if thinned_pointcloud.size == 0:
         print(" ERROR: Empty point cloud after filtering or thinning! Aborting CSF.")
         return np.array([]), np.array([])
 
-    max_z = np.max(thinned_pointcloud[:, 2])
-    inverted_pointcloud = thinned_pointcloud.copy()
-    inverted_pointcloud[:, 2] = max_z - thinned_pointcloud[:, 2]
-    print(" Inversion of terrain successful.")
+    # Extract max and min values for grid initialization
+    x_min, x_max = np.min(thinned_pointcloud[:, 0]), np.max(thinned_pointcloud[:, 0])
+    y_min, y_max = np.min(thinned_pointcloud[:, 1]), np.max(thinned_pointcloud[:, 1])
+    z_max = np.max(thinned_pointcloud[:, 2])
 
-    # Find the highest points in the inverted point cloud to initialize the grid higher than the max z value
-    max_z = np.max(inverted_pointcloud[:, 2])
-    print(f" Max Z: {max_z}")
-    print(" Initializing the grid higher than the max z value by 10 units (initial_z = max_z + 10).")
-    initial_z = max_z + 10
+    # Initialize vertices
+    x_range = np.arange(x_min, x_max, csf_res)
+    y_range = np.arange(y_min, y_max, csf_res)
+    vertices = [Vertex((x, y), z_max - 10, z_max + 10) for y in y_range for x in x_range] # Vertices are initialized at z_max + 10 and cannot go below z_max - 10,
+    edges = []
+    print(f" Grid initialized with {len(vertices)} vertices.")
 
-    # Use KDTree for efficient nearest neighbor search
-    kd_tree = cKDTree(inverted_pointcloud[:, :2])
+    # Create edges between vertices in a grid
+    width = len(x_range)
+    height = len(y_range)
+    for y in range(height):
+        for x in range(width):
+            if x > 0:  # Edge to the left
+                edges.append(Edge(vertices[y * width + x - 1], vertices[y * width + x]))
+            if y > 0:  # Edge above
+                edges.append(Edge(vertices[(y - 1) * width + x], vertices[y * width + x]))
 
-    # Initializing the cloth/grid
-    x_grid, y_grid = np.meshgrid(
-        np.arange(np.min(thinned_pointcloud[:, 0]), np.max(thinned_pointcloud[:, 0]), csf_res),
-        np.arange(np.min(thinned_pointcloud[:, 1]), np.max(thinned_pointcloud[:, 1]), csf_res)
-    )
-    z_grid = np.full(x_grid.shape, initial_z) 
+    kd_tree = cKDTree(thinned_pointcloud[:, :2])
 
-    # If max_iterations is not set, dynamically compute it as 75% of the total number of thinned points
-    if not max_iterations:
-        max_iterations = int(0.75 * len(thinned_pointcloud))
-        print("\n Max iterations not set. Using default 'dynamic' setting.")
-        print(f" Dynamically setting 'max_iterations' to 75% of total thinned points: {max_iterations} / {len(thinned_pointcloud)}")
+    print(" Starting simulation loop with 'epsilon':", epsilon, "and 'eps_z':", eps_z, "\n")
+    # Simulation loop to adjust the cloth 
+    for iteration in tqdm(range(max_iterations), desc="Cloth Simulation Progress"):
+        # Update vertices based on closest point cloud z values
+        for vertex in vertices:
+            _, index = kd_tree.query(vertex.position, k=1) # Find the closest point in the point cloud
+            closest_point_z = thinned_pointcloud[index, 2] # Get the z value of the closest point
+            vertex.update((closest_point_z - vertex.z) + epsilon) # Update the vertex z value
 
-    # Simulating the cloth falling process
-    with tqdm(total=max_iterations, desc="  CSF Progress") as pbar:
-        for iteration in range(max_iterations):
-            for i in range(z_grid.shape[0]):
-                for j in range(z_grid.shape[1]):
-                    dist, idx = kd_tree.query([x_grid[i, j], y_grid[i, j]], k=1)
-                    closest_z = max_z - inverted_pointcloud[idx, 2]
-                    neighbors = get_valid_neighbors(i, j, z_grid)
-                    if neighbors:
-                        z_grid[i, j] = (closest_z + epsilon + np.mean(neighbors)) / 2 # Average of closest_z + epsilon and neighbors
-                    else:
-                        z_grid[i, j] = closest_z + epsilon # No neighbors, set to closest_z + epsilon
-            pbar.update(1)
+        # Relax edges 
+        for edge in edges:
+            edge.relax()
 
-    # Classifying points as ground or non-ground
+        # Check for convergence
+        max_delta_z = max(abs(vertex.z - vertex.previous_z) for vertex in vertices)
+        if max_delta_z < eps_z:
+            print(f"    Convergence reached after {iteration + 1} iterations with max_delta_z: {max_delta_z}")
+            break
+
+    # Extract results
     ground_points = []
     non_ground_points = []
     for point in thinned_pointcloud:
-        grid_x_idx = int((point[0] - np.min(thinned_pointcloud[:, 0])) / csf_res)
-        grid_y_idx = int((point[1] - np.min(thinned_pointcloud[:, 1])) / csf_res)
-        cloth_z = z_grid[grid_y_idx, grid_x_idx]
-        if np.abs(point[2] - cloth_z) <= epsilon:
+        x_idx = np.searchsorted(x_range, point[0]) - 1
+        y_idx = np.searchsorted(y_range, point[1]) - 1
+        if x_idx < 0 or x_idx >= width or y_idx < 0 or y_idx >= height:
+            continue
+        vertex = vertices[y_idx * width + x_idx]
+        if abs(point[2] - vertex.z) <= epsilon:
             ground_points.append(point)
         else:
             non_ground_points.append(point)
 
-    ground_points = np.array(ground_points)
-    non_ground_points = np.array(non_ground_points)
-
-    ## PLOTS    
-    # Show cloth points after the simulation (_2_)
-    """ 
-    fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(thinned_pointcloud[:, 0], thinned_pointcloud[:, 1], thinned_pointcloud[:, 2], c='blue', label='Thinned Points', s=1)
-    ax.scatter(x_grid, y_grid, z_grid, c='red', label='Cloth Points', s=1)
-    ax.set_title('Cloth Points after Simulation')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.legend()
-    plt.show()     
-    """
-    # Show cloth surface after simulation (_3_)
-    """
-    fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot_surface(x_grid, y_grid, z_grid, cmap='terrain', edgecolor='none')
-    ax.set_title('Cloth Surface after Simulation')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.show()
-    """
-
-    # Show number of ground and non-ground points
-    print(f"\n    Number of ground points: {len(ground_points)}")
-    print(f"    Number of non-ground points: {len(non_ground_points)}")
-
-    # Number of shared points (must be zero)
-    if len(ground_points.intersection(non_ground_points)) > 0:
-        print("    WARNING: Shared points found between ground and non-ground points.")
-
-        shared_points = ground_points.intersection(non_ground_points)
-        shared_points = np.array(list(shared_points))
-        fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(shared_points[:, 0], shared_points[:, 1], shared_points[:, 2], c='blue', label='Shared Points', s=1)
-        ax.set_title('Shared Points between Ground and Non-Ground Points')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.legend()
-        plt.show()
-
-    else:
-        print("\n    No shared points found between ground and non-ground points!")
-
-    return ground_points, non_ground_points
+    return np.array(ground_points), np.array(non_ground_points)
 
 ## (TESTING) Function to visualize the separation between ground and non-ground points
 def test_ground_non_ground_separation(ground_points, non_ground_points):
@@ -328,7 +307,7 @@ def save_ground_points_las(ground_points, filename="ground.laz"):
     else:
         print("No ground points found after CSF classification.")
 
-### Step 2: Laplace Interpolation
+### --------------- Step 2: Laplace Interpolation ---------------
 ## (USED in Laplace) Function to compute the Jackknife RMSE for Laplace interpolation
 def jackknife_rmse_laplace(ground_points, minx, maxx, miny, maxy, resolution):
     """
@@ -420,7 +399,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     
     return dtm
 
-# (USED in Laplace) Function to check if a point is inside the convex hull
+## (USED in Laplace) Function to check if a point is inside the convex hull
 def point_in_hull(point, hull):
     return all((np.dot(eq[:-1], point) + eq[-1] <= 1e-12) for eq in hull.equations)
 
@@ -454,12 +433,14 @@ def weighted_barycentric_interpolate(x, y, vertices, hull):
     z = weights[0] * z1 + weights[1] * z2 + weights[2] * z3
     return z
 
-## Main function
+## -------------------- Main function --------------------
 def main():
     # Use parsed arguments directly
     print("\n")
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
 maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon} \n")
+    
+    eps_z = 0.0000005    # convergence threshold for stopping the simulation
 
     #------ Step 1: Ground filtering with CSF ------
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
@@ -477,10 +458,10 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
     print(">> Outliers removed succesfully.\n")
     # 3. Ground filtering with CSF
-    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon)
+    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon, eps_z)
     print (">> Ground points classified with CSF algorithm.\n")
     # 4. Testing ground and non-ground points
-    #test_ground_non_ground_separation(ground_points, non_ground_points)
+    test_ground_non_ground_separation(ground_points, non_ground_points)
     #print(">> Testing ground and non-ground points complete.\n")
 
      #------ Step 2: Laplace Interpolation ------
