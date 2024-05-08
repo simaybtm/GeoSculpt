@@ -1,6 +1,5 @@
 
-# Test run with: python step1.py 69GN2_14.LAZ 198350 308950 198600 309200 8.0 5.0 4
-
+# Test run with:  python step1.py 69GN2_14.LAZ 198350 308950 198600 309200 1 2 2
 
 # You have to use the following Python libraries: numpy, startinpy, pyinterpolate, rasterio, scipy, laspy, fiona, shapely.
 import numpy as np
@@ -13,10 +12,12 @@ import laspy
 
 import argparse
 
+
 # LIBRARIES FOR TESTING
+import logging # testing output
 import matplotlib.pyplot as plt # testing output
 from mpl_toolkits.mplot3d import Axes3D # testing output
-from tqdm import tqdm # Loading bar to assess time of execution
+from tqdm import tqdm # Loading bar
 from sklearn.metrics import mean_squared_error # testing output
 
 
@@ -36,6 +37,7 @@ epsilon	    used for classifying the points as ground if they are within "epsilo
 OUTPUTS:
 dtm.tiff    representing the 50cm-resolution DTM of the area created with Laplace
 ground.laz  the ground points
+thinned.laz the thinned + cropped according to the bbox input file
 '''
 
 # Argparse to handle command-line arguments
@@ -49,6 +51,11 @@ parser.add_argument('res', type=float, help='DTM resolution in meters')
 parser.add_argument('csf_res', type=float, help='Resolution in meters for the CSF grid')
 parser.add_argument('epsilon', type=float, help='Threshold in meters to classify the ground')
 args = parser.parse_args()
+
+# Logging function  for debugging
+def setup_logging():
+    logging.basicConfig(filename='csf_simulation.log', filemode='w', level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
 ### --------------- Step 1: Ground filtering with CSF ---------------
 ## Read LAS file with laspy and filter points by bounds
@@ -91,28 +98,16 @@ def thin_pc(pointcloud, thinning_percentage):
     print(f" Number of points before thinning: {pointcloud.shape[0]}")
     print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
 
-    ## PLOTS
-    """
-    # Plot the original point cloud in 3D (_0_)
-    plt.figure(figsize=(15, 10))
-    ax = plt.axes(projection='3d')
-    ax.scatter(pointcloud[:, 0], pointcloud[:, 1], pointcloud[:, 2], c='blue', s=1)
-    ax.set_title('Original Point Cloud')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.show()
-
-    # Plot the thinned point cloud in 3D (_1_)
-    plt.figure(figsize=(15, 10))
-    ax = plt.axes(projection='3d')
-    ax.scatter(thinned_pointcloud[:, 0], thinned_pointcloud[:, 1], thinned_pointcloud[:, 2], c='blue', s=1)
-    ax.set_title('Thinned Point Cloud')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.show() 
-    """
+    # Save thinned point cloud as LAZ file  
+    header = laspy.LasHeader(version="1.4", point_format=2)
+    las = laspy.LasData(header)
+    # Assign thinned points to the LAS file
+    las.x = thinned_pointcloud[:, 0]
+    las.y = thinned_pointcloud[:, 1]
+    las.z = thinned_pointcloud[:, 2]
+    # Write the LAS file to disk
+    las.write('thinned.laz')
+    
     return thinned_pointcloud
 
 ## Function to detect and remove outliers using k-Nearest Neighbors
@@ -135,97 +130,136 @@ def knn_outlier_removal(thinned_pointcloud, k):
     print(f" Removed {len(thinned_pointcloud) - len(non_outliers)} outliers.")
     return non_outliers
 
-## (USED in CSF) Function to run the Cloth Simulation Filter algorithm
-class Vertex:
-    def __init__(self, position, z_min, z_initial):
-        self.position = position
-        self.z = z_initial  # Start from an initial height 
-        self.z_min = z_min
-        self.previous_z = self.z
-    # Update the z value of the vertex based on the displacement
-    def update(self, displacement):
-        new_z = self.z + displacement
-        if new_z < self.z_min:
-            new_z = self.z_min
-        self.previous_z, self.z = self.z, new_z
-
-class Edge:
-    def __init__(self, vertex_a, vertex_b):
-        self.vertex_a = vertex_a
-        self.vertex_b = vertex_b
-
-    def relax(self):
-        # A spring system where the edge tries to keep vertices at the average of their heights
-        target_z = (self.vertex_a.z + self.vertex_b.z) / 2
-        self.vertex_a.update((target_z - self.vertex_a.z) * 0.5)
-        self.vertex_b.update((target_z - self.vertex_b.z) * 0.5)
-
+##  (USED in CSF) Function to create edges based on neighboring grid points
+def neighbours(grid_x, grid_y):
+    edge_list = []
+    rows, cols = grid_x.shape
+    for row in range(rows):
+        for col in range(cols):
+            idx = row * cols + col  # Convert 2D index to 1D index
+            if col < cols - 1:  # Horizontal edge
+                edge_list.append((idx, idx + 1))
+            if row < rows - 1:  # Vertical edge
+                edge_list.append((idx, idx + cols))
+    return edge_list
+        
 ## Function to run the Cloth Simulation Filter algorithm 
-def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, eps_z, max_iterations=10000):
+def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, miny, maxy):
     print("Running Cloth Simulation Filter algorithm...")
 
     if thinned_pointcloud.size == 0:
         print(" ERROR: Empty point cloud after filtering or thinning! Aborting CSF.")
         return np.array([]), np.array([])
+    
+    # Invert terrain
+    max_z = np.max(thinned_pointcloud[:, 2])  
+    inverted_pc = thinned_pointcloud.copy()
+    inverted_pc[:, 2] = max_z - inverted_pc[:, 2]  # Invert the heights
+    # Max elevation in inverted cloth
+    max_z_inverted = np.max(inverted_pc[:, 2])
+    print(" Terrain inverted.")
 
-    # Extract max and min values for grid initialization
-    x_min, x_max = np.min(thinned_pointcloud[:, 0]), np.max(thinned_pointcloud[:, 0])
-    y_min, y_max = np.min(thinned_pointcloud[:, 1]), np.max(thinned_pointcloud[:, 1])
-    z_max = np.max(thinned_pointcloud[:, 2])
+    # Build a KDTree of the point cloud
+    kd = cKDTree(inverted_pc[:, :2])  
 
-    # Initialize vertices
-    x_range = np.arange(x_min, x_max, csf_res)
-    y_range = np.arange(y_min, y_max, csf_res)
-    vertices = [Vertex((x, y), z_max - 10, z_max + 10) for y in y_range for x in x_range] # Vertices are initialized at z_max + 10 and cannot go below z_max - 10,
-    edges = []
-    print(f" Grid initialized with {len(vertices)} vertices.")
+    # Cloth grid points 
+    print(" Creating the cloth.")
+    x1 = np.arange (args.minx, args.maxx, csf_res)
+    y1 = np.arange (args.miny, args.maxy, csf_res)
+    grid_x, grid_y = np.meshgrid(x1, y1)
+    grid_points = np.column_stack([grid_x.ravel(), grid_y.ravel()])
+    
+    # Create the cloth grid
+    edge = np.array(neighbours(grid_x, grid_y))
 
-    # Create edges between vertices in a grid
-    width = len(x_range)
-    height = len(y_range)
-    for y in range(height):
-        for x in range(width):
-            if x > 0:  # Edge to the left
-                edges.append(Edge(vertices[y * width + x - 1], vertices[y * width + x]))
-            if y > 0:  # Edge above
-                edges.append(Edge(vertices[(y - 1) * width + x], vertices[y * width + x]))
+    
+    # Initialize vertices and edges of the cloth
+    z1 = max_z_inverted + 10
+    Cmin = inverted_pc[kd.query(grid_points, k=1)[1]][:, 2]
+    Ccurrent = np.linspace(z1, z1, grid_points.shape[0])
+    Cprevious = np.full(grid_points.shape[0], z1 + 10)
+    print(" Cloth initialized.")
+    
+    # Initiliaze movement of the cloth
+    mobility = np.ones(grid_points.shape[0], dtype=bool)
+    update = np.inf
+    
+    # Start the simulation
+    print(" Starting the simulation.")
+    while update > 0.01:
+            keep_going = mobility.nonzero()[0]
+            Cprevious[keep_going] = Ccurrent[keep_going]
+            Ccurrent[keep_going] -= 0.1  # gravity effect
 
-    kd_tree = cKDTree(thinned_pointcloud[:, :2])
+            for e0, e1 in edge:
+                if mobility[e0] or mobility[e1]:
+                    ze0, ze1 = Ccurrent[e0], Ccurrent[e1]
+                    average = (ze0 + ze1) / 2
+                    if mobility[e0]:
+                        Ccurrent[e0] = average
+                    if mobility[e1]:
+                        Ccurrent[e1] = average
+            
+            not_moving = Ccurrent < Cmin
+            Ccurrent[not_moving] = Cmin[not_moving]
+            Cprevious[not_moving] = Cmin[not_moving]
+            mobility = Ccurrent > Cmin
+            
+            update = np.max(np.abs(Ccurrent - Cprevious))
+        
+    print(" Cloth stabilized. Now starting classification of points as ground or non-ground.")
+    
+    # Adjust the cloth points to the original non-inverted elevations for accurate distance comparison
+    cloth_points = np.column_stack((grid_points, max_z - Ccurrent))
 
-    print(" Starting simulation loop with 'epsilon':", epsilon, "and 'eps_z':", eps_z, "\n")
-    # Simulation loop to adjust the cloth 
-    for iteration in tqdm(range(max_iterations), desc="Cloth Simulation Progress"):
-        # Update vertices based on closest point cloud z values
-        for vertex in vertices:
-            _, index = kd_tree.query(vertex.position, k=1) # Find the closest point in the point cloud
-            closest_point_z = thinned_pointcloud[index, 2] # Get the z value of the closest point
-            vertex.update((closest_point_z - vertex.z) + epsilon) # Update the vertex z value
+    # Create KDTree from the cloth points for efficient nearest neighbor searches
+    cloth_tree = cKDTree(cloth_points[:, :2])
 
-        # Relax edges 
-        for edge in edges:
-            edge.relax()
-
-        # Check for convergence
-        max_delta_z = max(abs(vertex.z - vertex.previous_z) for vertex in vertices)
-        if max_delta_z < eps_z:
-            print(f"    Convergence reached after {iteration + 1} iterations with max_delta_z: {max_delta_z}")
-            break
-
-    # Extract results
+    # Prepare arrays for ground and non-ground classification
     ground_points = []
     non_ground_points = []
+
+    # Classify points based on their distance to the nearest cloth point
     for point in thinned_pointcloud:
-        x_idx = np.searchsorted(x_range, point[0]) - 1
-        y_idx = np.searchsorted(y_range, point[1]) - 1
-        if x_idx < 0 or x_idx >= width or y_idx < 0 or y_idx >= height:
-            continue
-        vertex = vertices[y_idx * width + x_idx]
-        if abs(point[2] - vertex.z) <= epsilon:
+        distance, index = cloth_tree.query([point[0], point[1]])  # Find nearest cloth point
+        cloth_z = cloth_points[index, 2]
+        vertical_distance = abs(point[2] - cloth_z)
+
+        # Check against thresholds to classify points
+        if vertical_distance <= epsilon:
             ground_points.append(point)
         else:
             non_ground_points.append(point)
 
-    return np.array(ground_points), np.array(non_ground_points)
+    ground_points = np.array(ground_points)
+    non_ground_points = np.array(non_ground_points)
+
+    print(f" Number of ground points: {len(ground_points)}")
+    print(f" Number of non-ground points: {len(non_ground_points)}")
+
+    # Optional: Plotting 2D Cloth vs Ground
+    plt.figure(figsize=(15, 10))
+    plt.scatter(cloth_points[:, 0], cloth_points[:, 1], c='red', s=1, label='Cloth Points')
+    plt.scatter(ground_points[:, 0], ground_points[:, 1], c='green', s=1, label='Ground Points')
+    plt.title('Cloth Simulation Filter (CSF) Classification')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.legend()
+    plt.show()
+    
+    # Plot 3D Ground and Non-Ground Points (_2_)
+    fig = plt.figure(figsize=(15, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(ground_points[:, 0], ground_points[:, 1], ground_points[:, 2], c='green', label='Ground Points', s=1)
+    ax.scatter(non_ground_points[:, 0], non_ground_points[:, 1], non_ground_points[:, 2], c='red', label='Non-Ground Points', s=1)
+    ax.set_title('Ground and Non-Ground Points Classification')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    plt.show()
+    
+    return ground_points, non_ground_points
 
 ## (TESTING) Function to visualize the separation between ground and non-ground points
 def test_ground_non_ground_separation(ground_points, non_ground_points):
@@ -237,6 +271,22 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     - non_ground_points: np.array, points classified as non-ground.
     """
     print("Starting testing of ground and non-ground points separation...")
+
+    # Number of shared points (must be zero)
+    shared_points = np.intersect1d(ground_points, non_ground_points)
+    if len(shared_points) > 0:
+        print(f" ERROR: Found {len(shared_points)} shared points between ground and non-ground.")
+        fig = plt.figure(figsize=(15, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(shared_points[:, 0], shared_points[:, 1], shared_points[:, 2], c='purple', label='Shared Points', s=1)
+        ax.set_title('Shared Points between Ground and Non-Ground')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.legend()
+        plt.show()
+    else:
+        print(" No shared points found between ground and non-ground! Test passed.\n")    
 
     # STATISTICAL INFORMATION
     # See if there are exreme changes in the Z values of the ground points
@@ -364,6 +414,19 @@ def visualize_laplace(dtm, minx, maxx, miny, maxy, resolution):
 
 ## Function to create a continuous DTM using Laplace interpolation
 def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
+    """
+    Create the continuous 0.50cm-resolution DTM of this 250mX250m area using Laplace interpolation.
+
+    Input:
+        ground_points: np.array, array of ground points with columns [x, y, z].
+        minx, maxx, miny, maxy: float, bounding box coordinates.
+        resolution: float, resolution of the DTM grid.
+    Output:
+        dtm: np.array, a 2D array representing the DTM.
+
+    IMPORTANT: You are not allowed to use startinpy’s interpolate() function, you need to implement 
+               it yourself (but you can use startinpy triangulation and other functions).
+    """
     dt = startinpy.DT()
     for pt in ground_points:
         dt.insert_one_pt(pt[0], pt[1], pt[2])
@@ -440,7 +503,7 @@ def main():
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
 maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon} \n")
     
-    eps_z = 0.0000005    # convergence threshold for stopping the simulation
+    setup_logging()
 
     #------ Step 1: Ground filtering with CSF ------
     pointcloud = read_las(args.inputfile, args.minx, args.maxx, args.miny, args.maxy)
@@ -458,10 +521,10 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
     print(">> Outliers removed succesfully.\n")
     # 3. Ground filtering with CSF
-    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon, eps_z)
-    print (">> Ground points classified with CSF algorithm.\n")
+    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon, args.minx, args.maxx, args.miny, args.maxy)
+    print ("\n>> Ground points classified with CSF algorithm.\n")
     # 4. Testing ground and non-ground points
-    test_ground_non_ground_separation(ground_points, non_ground_points)
+    #test_ground_non_ground_separation(ground_points, non_ground_points)
     #print(">> Testing ground and non-ground points complete.\n")
 
      #------ Step 2: Laplace Interpolation ------
@@ -473,13 +536,13 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     print("DTM created and saved as dtm_laplace.tiff.")
 
     # 6. Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
-    jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
-    print(">> Jackknife RMSE computed.\n")
+    #jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    #print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
+    #print(">> Jackknife RMSE computed.\n")
 
     # 7. Visualize the filtered DTM
     visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    print("Shape of the DTM: ", dtm.shape)
+    print(" Shape of the DTM: ", dtm.shape)
     print(">> Laplace interpolation complete.\n")
 
     # 8. Save the ground points in a file called ground.laz
@@ -490,4 +553,3 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
 
 if __name__ == "__main__":
     main()
-    
