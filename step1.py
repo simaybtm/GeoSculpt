@@ -155,8 +155,7 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
     max_z = np.max(thinned_pointcloud[:, 2])  
     inverted_pc = thinned_pointcloud.copy()
     inverted_pc[:, 2] = max_z - inverted_pc[:, 2]  # Invert the heights
-    # Max elevation in inverted cloth
-    max_z_inverted = np.max(inverted_pc[:, 2])
+    max_z_inverted = np.max(inverted_pc[:, 2])     # Max elevation in inverted cloth
     print(" Terrain inverted.")
 
     # Build a KDTree of the point cloud
@@ -233,11 +232,12 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
 
     ground_points = np.array(ground_points)
     non_ground_points = np.array(non_ground_points)
-
-    print(f" Number of ground points: {len(ground_points)}")
-    print(f" Number of non-ground points: {len(non_ground_points)}")
-
-    # Optional: Plotting 2D Cloth vs Ground
+    
+    # Print Ground and Non-ground points with computed percentage to the total points
+    print(f" Ground Points: {len(ground_points)} and this is {len(ground_points) / len(thinned_pointcloud) * 100:.2f}% of the total points.")
+    print(f" Non-Ground Points: {len(non_ground_points)} and this is {len(non_ground_points) / len(thinned_pointcloud) * 100:.2f}% of the total points.")
+    """
+    # Plotting 2D Cloth vs Ground
     plt.figure(figsize=(15, 10))
     plt.scatter(cloth_points[:, 0], cloth_points[:, 1], c='red', s=1, label='Cloth Points')
     plt.scatter(ground_points[:, 0], ground_points[:, 1], c='green', s=1, label='Ground Points')
@@ -258,6 +258,7 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
     ax.set_zlabel('Z')
     ax.legend()
     plt.show()
+    """
     
     return ground_points, non_ground_points
 
@@ -269,24 +270,34 @@ def test_ground_non_ground_separation(ground_points, non_ground_points):
     Parameters:
     - ground_points: np.array, points classified as ground.
     - non_ground_points: np.array, points classified as non-ground.
+    
+    (We have to change numpy arrays to tuples because numpy arrays cannot be used directly in set operations.)
     """
     print("Starting testing of ground and non-ground points separation...")
 
-    # Number of shared points (must be zero)
-    shared_points = np.intersect1d(ground_points, non_ground_points)
-    if len(shared_points) > 0:
+   # Convert to set of tuples 
+    ground_set = set(map(tuple, ground_points))
+    non_ground_set = set(map(tuple, non_ground_points))
+    
+    # Find shared points
+    shared_points = ground_set.intersection(non_ground_set)
+    
+    if shared_points:
         print(f" ERROR: Found {len(shared_points)} shared points between ground and non-ground.")
-        fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(shared_points[:, 0], shared_points[:, 1], shared_points[:, 2], c='purple', label='Shared Points', s=1)
-        ax.set_title('Shared Points between Ground and Non-Ground')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.legend()
-        plt.show()
+        shared_points = np.array(list(shared_points))  # Convert back to array for plotting
+        
+        if shared_points.size > 0:
+            fig = plt.figure(figsize=(15, 10))
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(shared_points[:, 0], shared_points[:, 1], shared_points[:, 2], c='purple', label='Shared Points', s=1)
+            ax.set_title('Shared Points between Ground and Non-Ground')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.legend()
+            plt.show()
     else:
-        print(" No shared points found between ground and non-ground! Test passed.\n")    
+        print(" No shared points found between ground and non-ground! Test passed.\n")
 
     # STATISTICAL INFORMATION
     # See if there are exreme changes in the Z values of the ground points
@@ -356,6 +367,53 @@ def save_ground_points_las(ground_points, filename="ground.laz"):
         las.write(filename)
     else:
         print("No ground points found after CSF classification.")
+
+## Function to remove stubborn outliers using TIN
+def remove_outliers_with_tin(points):
+    dt = startinpy.DT()
+    for pt in points:
+        dt.insert_one_pt(pt[0], pt[1], pt[2])
+
+    # Find and remove triangles with long edges
+    triangles = dt.triangles
+    points = dt.points
+    long_edge_threshold = 0.6
+    to_remove = []
+
+    for t in triangles:
+        if not dt.is_finite(t): # Skip infinite triangles
+            continue
+        p1, p2, p3 = points[t[0]], points[t[1]], points[t[2]]
+        if np.linalg.norm(p1 - p2) > long_edge_threshold or \
+           np.linalg.norm(p2 - p3) > long_edge_threshold or \
+           np.linalg.norm(p3 - p1) > long_edge_threshold:
+            to_remove.extend([t[0], t[1], t[2]])
+
+    # Removing points connected by long edges 
+    for idx in set(to_remove): # Avoid duplicates
+        dt.remove(idx) 
+    
+    # 'Collect garbage' to clean up the triangulation 
+    if dt.has_garbage():
+        dt.collect_garbage()
+
+    # Return the cleaned-up points 
+    cleaned_points = dt.points[1:]  # Exclude the infinite vertex
+        
+    print (f" Removed {len(points) - len(cleaned_points)} stubborn outliers.\n")
+    
+    # Plot cleaned points
+    fig = plt.figure(figsize=(15, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(cleaned_points[:, 0], cleaned_points[:, 1], cleaned_points[:, 2], c='blue', label='Cleaned Points', s=1)
+    ax.set_title('Cleaned Points after Outlier Removal with TIN')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    plt.show()
+
+    return cleaned_points
 
 ### --------------- Step 2: Laplace Interpolation ---------------
 ## (USED in Laplace) Function to compute the Jackknife RMSE for Laplace interpolation
@@ -523,29 +581,33 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     # 3. Ground filtering with CSF
     ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon, args.minx, args.maxx, args.miny, args.maxy)
     print ("\n>> Ground points classified with CSF algorithm.\n")
-    # 4. Testing ground and non-ground points
+    # ADDITIONAL: Testing ground and non-ground points
     #test_ground_non_ground_separation(ground_points, non_ground_points)
     #print(">> Testing ground and non-ground points complete.\n")
+    
+    # ADDITIONAL: Remove stubborn outliers with TIN
+    print("Removing stubborn outliers with TIN...")
+    ground_points = remove_outliers_with_tin(ground_points)
 
      #------ Step 2: Laplace Interpolation ------
     if ground_points.size == 0:
         print("No valid ground points found. Exiting program...")
-        return  
-    # 5. Laplace
+        return    
+    # 4. Laplace
     dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
     print("DTM created and saved as dtm_laplace.tiff.")
 
-    # 6. Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
+    # ADDITIONAL: Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
     #jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
     #print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
     #print(">> Jackknife RMSE computed.\n")
 
-    # 7. Visualize the filtered DTM
+    # ADDITIONAL: Visualize the filtered DTM
     visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
     print(" Shape of the DTM: ", dtm.shape)
     print(">> Laplace interpolation complete.\n")
 
-    # 8. Save the ground points in a file called ground.laz
+    # 5. Save the ground points in a file called ground.laz
     save_ground_points_las(ground_points)
     print(">> Ground points saved to ground.laz.\n")
     
