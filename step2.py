@@ -56,8 +56,12 @@ def visualize_ok(dtm, x_range, y_range):
     fig = plt.figure(figsize=(10, 7))
     ax = fig.add_subplot(111, projection='3d')
     surf = ax.plot_surface(X, Y, dtm, cmap='terrain', linewidth=0, antialiased=False)
-    plt.colorbar(surf, shrink=0.5, aspect=5)
-    plt.show()
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+    plt.title("Digital Terrain Model (DTM) Interpolated with Ordinary Kriging")
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    ax.set_zlabel('Elevation')
+    plt.show
     
 ##  Divides the dataset into a training set and a test set.
 def create_train_test(dataset, training_set_ratio=0.3, seed=101):
@@ -138,12 +142,16 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     print("\nTHEORETICAL MODEL\n",semivar)
     semivar.plot()
     
-    # Step 4: Perform Ordinary Kriging
-    x_coords = np.arange(minx, maxx + resolution, resolution) 
-    y_coords = np.arange(miny, maxy + resolution, resolution)
-    grid_x, grid_y = np.meshgrid(x_coords, y_coords) # Create a grid of points
+    # Preparing grid for interpolation
+    x_steps = int((maxx - minx) / resolution) + 1 # Number of steps needed in x direction
+    y_steps = int((maxy - miny) / resolution) + 1 # Number of steps needed in y direction
+
+    x_coords = np.arange(minx, maxx + 0.5 * resolution, resolution)[:x_steps]
+    y_coords = np.arange(miny, maxy + 0.5 * resolution, resolution)[:y_steps] 
     
-    unknown_points = np.vstack([grid_x.ravel(), grid_y.ravel()]).T # Reshape the grid to a list of points 
+    # Ensure it matches the expected number of grid points (which should be 63001 for a 251x251 grid)
+    unknown_points = np.vstack([np.repeat(x_coords, len(y_coords)), np.tile(y_coords, len(x_coords))]).T
+    print(" Grid created with shape: ", unknown_points.shape)
     
     # Ensure no dublicates in 'point_data'
     if len(np.unique(point_data, axis=0)) != len(point_data):
@@ -153,7 +161,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     else:
         print("No duplicates found in the point data.")
 
-    # Predictions
+    # Perform Ordinary Kriging: predict the unknown points
     print("\nPerforming Ordinary Kriging...")    
     predictions = kriging(observations=point_data, theoretical_model=semivar,
                           points=unknown_points, how='ok', no_neighbors=no_neighbors,
@@ -161,7 +169,8 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
 
     # Reshape predictions to match the grid -> kriging returns a list of tuples 
     predicted_values = np.array([pred[0] for pred in predictions])
-    dtm = predicted_values.reshape(grid_y.shape)
+    print("Predicted values count:", predicted_values.size)
+    dtm = predicted_values.reshape(y_steps, x_steps)
 
     # Save the DTM to a TIFF file
     transform = from_origin(minx, maxy, resolution, -resolution)

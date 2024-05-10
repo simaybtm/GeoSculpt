@@ -491,9 +491,13 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
         dt.insert_one_pt(pt[0], pt[1], pt[2])
     
     # Preparing grid for interpolation
-    x_range = np.linspace(minx, maxx, num=int((maxx - minx) / resolution)) 
-    y_range = np.linspace(miny, maxy, num=int((maxy - miny) / resolution))
-    dtm = np.full((len(y_range), len(x_range)), np.nan) # Initialize with NaN values
+    x_steps = int((maxx - minx) / resolution) + 1 # Number of steps needed in x direction
+    y_steps = int((maxy - miny) / resolution) + 1 # Number of steps needed in y direction
+
+    x_coords = np.arange(minx, maxx + 0.5 * resolution, resolution)[:x_steps]
+    y_coords = np.arange(miny, maxy + 0.5 * resolution, resolution)[:y_steps]
+
+    dtm = np.full((len(y_coords), len(x_coords)), np.nan)  # Initialize DTM with NaN values
 
     # Build convex hull (2D) for the ground points and interpolate the z values
     hull = ConvexHull(ground_points[:, :2])
@@ -504,8 +508,8 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     print("\n")
 
     # Interpolate the z values for each point in the grid
-    for j, y in enumerate(y_range):
-        for i, x in enumerate(x_range):
+    for j, y in enumerate(y_coords):
+        for i, x in enumerate(x_coords):
             if point_in_hull((x, y), hull):
                 dtm[j, i] = interpolate_z_value(dt, x, y, hull) # Interpolate the z value
             else:
@@ -542,14 +546,22 @@ def weighted_barycentric_interpolate(x, y, vertices, hull):
     x3, y3, z3 = vertices[2]
 
     # Calculate distances from the point to each vertex
-    distances = np.array([np.sqrt((x - vx)**2 + (y - vy)**2) for vx, vy, vz in vertices])
-    # Normalize distances
+    safety = 1e-10  # veryyyyy small number to prevent division by zero
+    distances = np.array([np.sqrt((x - vx)**2 + (y - vy)**2) + safety for vx, vy, _ in vertices])
+  
+    # Calculate weights inversely proportional to distances
     weights = 1 / distances
-    if any(np.dot(eq[:-1], (x, y)) + eq[-1] > 0 for eq in hull.equations):  # Check if near the edge
-        weights *= 0.5  # Reduce the influence of vertices if near the edge
+
+    # If the point is near the edge of the convex hull, reduce the influence of vertices
+    if any(np.dot(eq[:-1], (x, y)) + eq[-1] > 0 for eq in hull.equations):
+        weights *= 0.5
 
     # Normalize weights
-    weights /= np.sum(weights)
+    total_weight = np.sum(weights)
+    if total_weight == 0:
+        weights = np.ones_like(weights) / len(weights)  # distribute evenly if total weight is zero
+    else:
+        weights /= total_weight
 
     # Calculate weighted Z using normalized weights
     z = weights[0] * z1 + weights[1] * z2 + weights[2] * z3
