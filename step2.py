@@ -79,7 +79,7 @@ def create_train_test(dataset, training_set_ratio=0.3, seed=101):
     return dataset[training_idx], dataset[testing_idx]
 
 ## Function to create a continuous DTM using Ordinary Kriging
-def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy, thinning_factor=20, step_size=3, max_range_factor=0.8, no_neighbors=8):
+def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy, thinning_factor=20, step_size=3, max_range_factor=0.8, no_neighbors=1):
     print(" Thinning factor:", thinning_factor, "step_size:", step_size, "max_range_factor:", max_range_factor, "no_neighbors:", no_neighbors)
 
     # Calculate variance of the dataset 
@@ -98,31 +98,45 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     print(f" Max range: {max_range}\n")
     
     # Creating train and test datasets
-    train_set, test_set = create_train_test(ground_points)
+    train_set, test_set = create_train_test(point_data)
+    print (" Using pyinterpolate's method to create 'test' and 'train' sets to build the experimental variogram.")
+    print(f" Train set: {len(train_set)} points | Test set: {len(test_set)} points\n")
     
-    # Step 2: Calculate the experimental semivariogram
+    # Build experimental variogram from the training set
+    print(" Calculating the experimental semivariogram using test set...")
+    try:
+        exp_variogram = build_experimental_variogram(input_array=train_set, step_size=search_radius, max_range=max(max_range))
+        exp_variogram.plot()
+        print(" Experimental variogram calculated using the training set.\n")
+        print ("EXPERIMENTAL MODEL\n",exp_variogram)
+    except MemoryError as e:
+        print(f"\nMemoryError: {e}\n")
+        sys.exit(1) # Exit program
+    
+    # Build experimental variogram (w/o test set)
+    """
     print(" Calculating the experimental semivariogram...")
     try:
         experimental_semivariogram = build_experimental_variogram(
             input_array=point_data, step_size=search_radius, max_range=max(max_range))
         print("Experimental semivariogram calculated.")
         print("EXPERIMENTAL MODEL\n",experimental_semivariogram)
+        experimental_semivariogram.plot()
     except MemoryError as e:
         print(f"\nMemoryError: {e}\n")
         sys.exit(1) # Exit program
+    """
     
-    # Plot variogram
-    experimental_semivariogram.plot()
-    
-    # Step 3: Fit a theoretical semivariogram model
-    print("\n Fitting a theoretical semivariogram model...")
-    semivar = build_theoretical_variogram(experimental_variogram=experimental_semivariogram,
+    # Fit a theoretical semivariogram model 
+    print("\nFitting a theoretical semivariogram model...")
+    semivar = build_theoretical_variogram(experimental_variogram=exp_variogram, # Change variogram according to the experimental variogram computed
                                           model_name='linear', 
-                                          sill=variance, # meters 
-                                          rang=300, # meters 
-                                          nugget=0)  # meters
-    print("\n\nTheoretical semivariogram model fitted.")
+                                          sill=variance,
+                                          rang=max(max_range), 
+                                          nugget=0)  
+    print("\nTheoretical semivariogram model fitted.")
     print("\nTHEORETICAL MODEL\n",semivar)
+    semivar.plot()
     
     # Step 4: Perform Ordinary Kriging
     x_coords = np.arange(minx, maxx + resolution, resolution) 
@@ -130,10 +144,20 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     grid_x, grid_y = np.meshgrid(x_coords, y_coords) # Create a grid of points
     
     unknown_points = np.vstack([grid_x.ravel(), grid_y.ravel()]).T # Reshape the grid to a list of points 
+    
+    # Ensure no dublicates in 'point_data'
+    if len(np.unique(point_data, axis=0)) != len(point_data):
+        print("Duplicates found in the point data. Removing duplicates...")
+        point_data = np.unique(point_data, axis=0)
+        print("Duplicates removed.")
+    else:
+        print("No duplicates found in the point data.")
 
     # Predictions
+    print("\nPerforming Ordinary Kriging...")    
     predictions = kriging(observations=point_data, theoretical_model=semivar,
-                          points=unknown_points, how='ok', no_neighbors=no_neighbors) 
+                          points=unknown_points, how='ok', no_neighbors=no_neighbors,
+                          allow_approx_solutions=True) 
 
     # Reshape predictions to match the grid -> kriging returns a list of tuples 
     predicted_values = np.array([pred[0] for pred in predictions])
@@ -218,9 +242,9 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     ground_points = remove_outliers_with_tin(ground_points)
     """
     #------ Step 2: Ordinary Kriging ------
-    # Cheat here if you already ran step 1 and have the ground points saved ("new_ground_p.las")
-    print(" Cheating here, using the ground points from step 1 to skip CSF computation again...\n")
-    print( " Warning: The same parameters used in step 1 should be used here as well. \n")
+    # Cheat here if you already ran step1.py and have the ground points saved in a file ("ground.laz")
+    print(" \nCheating here, using the saved ground points from step 1 to skip CSF computation again...")
+    print( f" Warning: The same parameters used in step1.py should be used here as well. \n In this case, the parameters are: minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res} \n")
     ground_points = read_las("ground.laz", args.minx, args.maxx, args.miny, args.maxy)
     
     if ground_points is None or ground_points.size == 0:
@@ -238,6 +262,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     print("\nStarting Ordinary Kriging interpolation...")
     dtm = ordinary_kriging_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
     print("\nDTM saved as dtm_ordinary_kriging.tiff")
+    print(" Shape of the DTM: ", dtm.shape)
     print(">> Ordinary Kriging interpolation complete.\n")
 
     # 5. Save the ground points in a file called ground.laz
