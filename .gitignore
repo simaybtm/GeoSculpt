@@ -5,3 +5,6 @@ example.tif
 thinned.LAZ
 ground.LAZ
 
+*.log
+*.tiff
+*.tiff
