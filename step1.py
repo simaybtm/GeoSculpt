@@ -402,7 +402,8 @@ def remove_outliers_with_tin(points):
         
     print (f" Removed {len(points) - len(cleaned_points)} stubborn outliers.\n")
     
-    # Plot cleaned points
+    # Plot cleaned points  
+    """
     fig = plt.figure(figsize=(15, 10))
     ax = fig.add_subplot(111, projection='3d')
     ax.scatter(cleaned_points[:, 0], cleaned_points[:, 1], cleaned_points[:, 2], c='blue', label='Cleaned Points', s=1)
@@ -412,11 +413,11 @@ def remove_outliers_with_tin(points):
     ax.set_zlabel('Z')
     ax.legend()
     plt.show()
-
+    """
     return cleaned_points
 
 ### --------------- Step 2: Laplace Interpolation ---------------
-## (USED in Laplace) Function to compute the Jackknife RMSE for Laplace interpolation
+## Function to compute the Jackknife RMSE for Laplace interpolation
 def jackknife_rmse_laplace(ground_points, minx, maxx, miny, maxy, resolution):
     """
     Compute the Jackknife RMSE for Laplace interpolation.
