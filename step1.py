@@ -75,28 +75,36 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
         print(f"An error occurred: {e}")
         return None
 
-## Function to thin the point cloud 
-def thin_pc(pointcloud, thinning_percentage):
+## Function to thin the point cloud using a grid-based approach
+def thin_pc(pointcloud, keep_percentage):
     print("Thinning the point cloud...")
-    if thinning_percentage <= 0 or thinning_percentage >= 100:
-        raise ValueError("Thinning percentage must be between 0 and 100 (exclusive).")
-
-    # Calculate the number of points to keep based on the percentage
-    num_points_to_keep = int(len(pointcloud) * (thinning_percentage / 100.0))
     
-    # Ensure at least one point is kept
-    num_points_to_keep = max(num_points_to_keep, 1)
+    # If percentage not between 0 and 100, error
+    if keep_percentage < 0 or keep_percentage > 100:
+        print(" ERROR: Invalid keep percentage. Must be between 0 and 100.")
+        return np.array([])
     
-    # Calculate the step size to achieve the desired thinning percentage
-    step_size = len(pointcloud) // num_points_to_keep
+    print(f" Thinning percentage (points kept): {keep_percentage}%")
+    # Determine the dimensions of the point cloud's bounding box
+    min_x, min_y = np.min(pointcloud[:, :2], axis=0)
+    max_x, max_y = np.max(pointcloud[:, :2], axis=0)
+    # Calculate the interval based on the desired percentage of points to keep
+    interval = np.sqrt((max_x - min_x) * (max_y - min_y) / (len(pointcloud) * (keep_percentage / 100)))
+    # Generate grid points
+    x_coords = np.arange(min_x, max_x, interval)
+    y_coords = np.arange(min_y, max_y, interval)
+    grid_points = np.transpose([np.tile(x_coords, len(y_coords)), np.repeat(y_coords, len(x_coords))])
 
-    # Thinning by selecting points at regular intervals
-    thinned_pointcloud = pointcloud[::step_size]  
+    # Build a KDTree for efficient nearest neighbor search
+    tree = cKDTree(pointcloud[:, :2])
+    # Find the nearest point in the point cloud to each grid point
+    distances, indices = tree.query(grid_points, k=1)
+    thinned_pointcloud = pointcloud[indices]
+    thinned_pointcloud = np.unique(thinned_pointcloud, axis=0)  # Remove duplicates if necessary
+
+    print(f" Number of points before thinning: {len(pointcloud)}")
+    print(f" Number of points after thinning: {len(thinned_pointcloud)}")
     
-    print(f" Thinning percentage: {thinning_percentage}%")
-    print(f" Number of points before thinning: {pointcloud.shape[0]}")
-    print(f" Number of points after thinning: {thinned_pointcloud.shape[0]}")
-
     # Save thinned point cloud as LAZ file  
     header = laspy.LasHeader(version="1.4", point_format=2)
     las = laspy.LasData(header)
@@ -587,7 +595,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         print(">> Point cloud read successfully.\n")
 
     # 1. Thinning
-    thinned_pc = thin_pc(pointcloud, 50) # thinning percentage (0-100)
+    thinned_pc = thin_pc(pointcloud, 70) # Percentage of points to keep
     print(">> Point cloud thinned.\n")
     # 2. Outlier removal
     thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
