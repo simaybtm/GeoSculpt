@@ -8,3 +8,5 @@ ground.LAZ
 *.log
 *.tiff
 *.tiff
+cropped_AHN.tif
+dtm_laplace.tiff

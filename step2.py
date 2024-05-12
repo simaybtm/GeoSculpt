@@ -52,6 +52,7 @@ args = parser.parse_args()
 ### Step 2: Ordinary Kriging
 ## Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
 def visualize_ok(dtm, x_range, y_range):
+    print("Visualizing the DTM created with Ordinary Kriging...")
     X, Y = np.meshgrid(x_range, y_range)
     fig = plt.figure(figsize=(10, 7))
     ax = fig.add_subplot(111, projection='3d')
@@ -61,7 +62,7 @@ def visualize_ok(dtm, x_range, y_range):
     plt.xlabel('X')
     plt.ylabel('Y')
     ax.set_zlabel('Elevation')
-    plt.show
+    plt.show()
     
 ##  Divides the dataset into a training set and a test set.
 def create_train_test(dataset, training_set_ratio=0.3, seed=101):
@@ -86,19 +87,19 @@ def create_train_test(dataset, training_set_ratio=0.3, seed=101):
 def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, maxy, thinning_factor=20, step_size=3, max_range_factor=0.8, no_neighbors=1):
     print(" Thinning factor:", thinning_factor, "step_size:", step_size, "max_range_factor:", max_range_factor, "no_neighbors:", no_neighbors)
 
-    # Calculate variance of the dataset 
-    variance = np.var(ground_points[:, 2])
-    print(f" Variance of the dataset: {variance}\n")
-
     # Prepare the data
     point_data = np.array(ground_points)
     # Thin further for experimental semivariogram
     point_data = ground_points[::thinning_factor]
     print(f" Points before thinning: {len(ground_points)} | Points after thinning: {len(point_data)}\n")
+    
+    # Calculate variance of the dataset 
+    variance = np.var(point_data[:, 2])
+    print(f" Variance of the dataset: {variance}\n")
 
     # Set the search radius and max range
     search_radius = resolution * step_size 
-    max_range = ((maxx - minx) / max_range_factor, (maxy - miny) / max_range_factor) 
+    max_range = ((maxx - minx) / max_range_factor, (maxy - miny) / max_range_factor) #if max_range_factor increases, max_range decreases
     print(f" Max range: {max_range}\n")
     
     # Creating train and test datasets
@@ -134,8 +135,8 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     # Fit a theoretical semivariogram model 
     print("\nFitting a theoretical semivariogram model...")
     semivar = build_theoretical_variogram(experimental_variogram=exp_variogram, # Change variogram according to the experimental variogram computed
-                                          model_name='linear', 
-                                          sill=variance,
+                                          model_name='exponential', 
+                                          sill=80,
                                           rang=max(max_range), 
                                           nugget=0)  
     print("\nTheoretical semivariogram model fitted.")
@@ -153,7 +154,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     unknown_points = np.vstack([np.repeat(x_coords, len(y_coords)), np.tile(y_coords, len(x_coords))]).T
     print(" Grid created with shape: ", unknown_points.shape)
     
-    # Ensure no dublicates in 'point_data'
+    # Ensure no duplicates in 'point_data'
     if len(np.unique(point_data, axis=0)) != len(point_data):
         print("Duplicates found in the point data. Removing duplicates...")
         point_data = np.unique(point_data, axis=0)
@@ -218,7 +219,7 @@ def jackknife_rmse_ok(ground_points, resolution, minx, maxx, miny, maxy, sample_
 
 ## Main function
 def main():
-    """
+    
     # Use parsed arguments directly
     print("\n")
     print(f"Processing {args.inputfile} with minx={args.minx}, miny={args.miny}, maxx={args.maxx}, \
@@ -249,12 +250,12 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     # ADDITIONAL: Remove stubborn outliers with TIN
     print("Removing stubborn outliers with TIN...")
     ground_points = remove_outliers_with_tin(ground_points)
-    """
+    
     #------ Step 2: Ordinary Kriging ------
     # Cheat here if you already ran step1.py and have the ground points saved in a file ("ground.laz")
-    print(" \nCheating here, using the saved ground points from step 1 to skip CSF computation again...")
-    print( f" Warning: The same parameters used in step1.py should be used here as well. \n In this case, the parameters are: minx={args.minx}, miny={args.miny}, maxx={args.maxx}, maxy={args.maxy}, res={args.res} \n")
-    ground_points = read_las("ground.laz", args.minx, args.maxx, args.miny, args.maxy)
+    #print(" \nCheating here, using the saved ground points from step 1 to skip CSF computation again...")
+    #print( f" Warning: The same parameters used in step1.py should be used here as well. \n")
+    #ground_points = read_las("ground.laz", args.minx, args.maxx, args.miny, args.maxy)
     
     if ground_points is None or ground_points.size == 0:
         print("No ground points found within the specified bounding box.")
