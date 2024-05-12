@@ -21,7 +21,6 @@ from tqdm import tqdm # Loading bar
 from sklearn.metrics import mean_squared_error # testing output
 
 
-
 '''
 INPUTS:
 name	    step1.py
@@ -131,7 +130,7 @@ def knn_outlier_removal(thinned_pointcloud, k):
     return non_outliers
 
 ##  (USED in CSF) Function to create edges based on neighboring grid points
-def neighbours(grid_x, grid_y):
+def neighbors(grid_x, grid_y):
     edge_list = []
     rows, cols = grid_x.shape
     for row in range(rows):
@@ -169,14 +168,13 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
     grid_points = np.column_stack([grid_x.ravel(), grid_y.ravel()])
     
     # Create the cloth grid
-    edge = np.array(neighbours(grid_x, grid_y))
+    edge = np.array(neighbors(grid_x, grid_y))
 
-    
     # Initialize vertices and edges of the cloth
     z1 = max_z_inverted + 10
-    Cmin = inverted_pc[kd.query(grid_points, k=1)[1]][:, 2]
+    Cmin = inverted_pc[kd.query(grid_points, k=1)[1]][:, 2] # Minimum elevation of the nearest neighbor
     Ccurrent = np.linspace(z1, z1, grid_points.shape[0])
-    Cprevious = np.full(grid_points.shape[0], z1 + 10)
+    Cprevious = np.full(grid_points.shape[0], z1)
     print(" Cloth initialized.")
     
     # Initiliaze movement of the cloth
@@ -234,8 +232,11 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
     non_ground_points = np.array(non_ground_points)
     
     # Print Ground and Non-ground points with computed percentage to the total points
-    print(f" Ground Points: {len(ground_points)} and this is {len(ground_points) / len(thinned_pointcloud) * 100:.2f}% of the total points.")
-    print(f" Non-Ground Points: {len(non_ground_points)} and this is {len(non_ground_points) / len(thinned_pointcloud) * 100:.2f}% of the total points.")
+    print(f" Ground Points: {len(ground_points)} and this is \
+        {len(ground_points) / len(thinned_pointcloud) * 100:.2f}% of the total points.")
+    print(f" Non-Ground Points: {len(non_ground_points)} and this is\
+        {len(non_ground_points) / len(thinned_pointcloud) * 100:.2f}% of the total points.")
+    
     """
     # Plotting 2D Cloth vs Ground
     plt.figure(figsize=(15, 10))
@@ -259,7 +260,7 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
     ax.legend()
     plt.show()
     """
-    
+ 
     return ground_points, non_ground_points
 
 ## (TESTING) Function to visualize the separation between ground and non-ground points
@@ -501,7 +502,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
 
     # Build convex hull (2D) for the ground points and interpolate the z values
     hull = ConvexHull(ground_points[:, :2])
-    print("Creating the convex hull (2D) for the ground points to interpolate...")
+    print(" Creating the convex hull (2D) for the ground points to interpolate...")
     # Boundary of the las VS the boundary of the convex hull
     print(" Boundary of the las file: ", minx, maxx, miny, maxy)
     print(" Boundary of the convex hull: ", hull.min_bound, hull.max_bound)
@@ -555,7 +556,7 @@ def weighted_barycentric_interpolate(x, y, vertices, hull):
     # If the point is near the edge of the convex hull, reduce the influence of vertices
     if any(np.dot(eq[:-1], (x, y)) + eq[-1] > 0 for eq in hull.equations):
         weights *= 0.5
-
+    
     # Normalize weights
     total_weight = np.sum(weights)
     if total_weight == 0:
@@ -592,7 +593,8 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
     print(">> Outliers removed succesfully.\n")
     # 3. Ground filtering with CSF
-    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon, args.minx, args.maxx, args.miny, args.maxy)
+    ground_points, non_ground_points = cloth_simulation_filter(thinned_pc, args.csf_res, args.epsilon, \
+        args.minx, args.maxx, args.miny, args.maxy)
     print ("\n>> Ground points classified with CSF algorithm.\n")
     # ADDITIONAL: Testing ground and non-ground points
     #test_ground_non_ground_separation(ground_points, non_ground_points)
@@ -607,6 +609,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         print("No valid ground points found. Exiting program...")
         return    
     # 4. Laplace
+    print("Starting Laplace interpolation...")
     dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
     print("DTM created and saved as dtm_laplace.tiff.")
 
@@ -625,6 +628,6 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     print(">> Ground points saved to ground.laz.\n")
     
     print("\nStep 1 completed!\n\n")   
-
+    
 if __name__ == "__main__":
     main()
