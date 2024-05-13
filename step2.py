@@ -150,7 +150,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     x_coords = np.arange(minx, maxx + 0.5 * resolution, resolution)[:x_steps]
     y_coords = np.arange(miny, maxy + 0.5 * resolution, resolution)[:y_steps] 
     
-    # Ensure it matches the expected number of grid points (which should be 63001 for a 251x251 grid)
+    # Ensure it matches the expected number of grid points 
     unknown_points = np.vstack([np.repeat(x_coords, len(y_coords)), np.tile(y_coords, len(x_coords))]).T
     print(" Grid created with shape: ", unknown_points.shape)
     
@@ -261,7 +261,6 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         print("No ground points found within the specified bounding box.")
         # Terminating the program if no points are found
         return
-    
 
     # ADDITIONAL: Jackknife RMSE computation for Ordinary Kriging
     #print("Starting Jackknife RMSE computation for Ordinary Kriging...")

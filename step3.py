@@ -8,6 +8,8 @@ import laspy
 # Loading bar
 from tqdm import tqdm
 
+#python step1.py 69GN2_14.LAZ 198350 308950 198600 309200 0.5 X X for (500,500) size
+
 # Paths to your DTMs
 dtm_laplace_path = "C:\\Users\\simay\\OneDrive\\Desktop\\DTM_R\\DTM_creation\\dtm_laplace.tiff"
 dtm_ok_path = "C:\\Users\\simay\\OneDrive\\Desktop\\DTM_R\\DTM_creation\\dtm_ordinary_kriging.tiff"

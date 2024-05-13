@@ -595,7 +595,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
         print(">> Point cloud read successfully.\n")
 
     # 1. Thinning
-    thinned_pc = thin_pc(pointcloud, 70) # Percentage of points to keep
+    thinned_pc = thin_pc(pointcloud, 50) # Percentage of points to keep
     print(">> Point cloud thinned.\n")
     # 2. Outlier removal
     thinned_pc = knn_outlier_removal(thinned_pc, 10)  # k value for k-NN outlier removal
@@ -622,9 +622,9 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     print("DTM created and saved as dtm_laplace.tiff.")
 
     # ADDITIONAL: Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
-    #jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    #print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
-    #print(">> Jackknife RMSE computed.\n")
+    jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
+    print(">> Jackknife RMSE computed.\n")
 
     # ADDITIONAL: Visualize the filtered DTM
     visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
