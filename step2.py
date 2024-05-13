@@ -1,21 +1,21 @@
-# python step2.py 69GN2_14.LAZ 198350 308950 198600 309200 1 2 0.5
+# Test run with:   python step2.py 69GN2_14.LAZ 198350 308950 198600 309200 1 2 0.5
 
 from step1 import read_las, thin_pc, cloth_simulation_filter, remove_outliers_with_tin, test_ground_non_ground_separation, save_ground_points_las, knn_outlier_removal
-
 
 import numpy as np
 import laspy
 from pyinterpolate import build_experimental_variogram, build_theoretical_variogram, kriging
-
-import argparse
 import rasterio
 from rasterio.transform import from_origin
 from scipy.spatial import cKDTree
 
-from tqdm import tqdm 
-import sys
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import argparse
+
+# LIBRARIES FOR TESTING
+from tqdm import tqdm  # Loading bar
+import sys # For sys.exit(1)
+import matplotlib.pyplot as plt # testing output
+from mpl_toolkits.mplot3d import Axes3D # testing output
 
 '''
 INPUTS:
@@ -50,7 +50,7 @@ args = parser.parse_args()
 ## Functions used from step1.py
 
 ### Step 2: Ordinary Kriging
-## Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
+## (USED in OK) Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
 def visualize_ok(dtm, x_range, y_range):
     print("Visualizing the DTM created with Ordinary Kriging...")
     X, Y = np.meshgrid(x_range, y_range)
@@ -64,16 +64,16 @@ def visualize_ok(dtm, x_range, y_range):
     ax.set_zlabel('Elevation')
     plt.show()
     
-##  Divides the dataset into a training set and a test set.
+##  (USED in OK) Divides the dataset into a training set and a test set.
 def create_train_test(dataset, training_set_ratio=0.3, seed=101):
     """
-    Args:
-    dataset (np.ndarray): The complete dataset array where each row is a data point.
-    training_set_ratio (float): The proportion of the dataset to include in the train split.
-    seed (int): Seed for the random number generator for reproducibility.
+    Input:
+        dataset (np.ndarray): The complete dataset array where each row is a data point.
+        training_set_ratio (float): The proportion of the dataset to include in the train split.
+        seed (int): Seed for the random number generator for reproducibility.
 
-    Returns:
-    tuple: Two numpy arrays, (training_set, test_set)
+    Output:
+        tuple: Two numpy arrays, (training_set, test_set)
     """
     np.random.seed(seed)
     indices = np.arange(dataset.shape[0])
@@ -183,7 +183,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
 
     
     # Visualize the DTM created with Ordinary Kriging
-    visualize_ok(dtm, x_coords, y_coords)
+    #visualize_ok(dtm, x_coords, y_coords)
     
     return dtm
 
@@ -270,7 +270,7 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     # 4. Perform Ordinary Kriging to create a continuous DTM
     print("\nStarting Ordinary Kriging interpolation...")
     dtm = ordinary_kriging_interpolation(ground_points, args.res, args.minx, args.maxx, args.miny, args.maxy)
-    print("\nDTM saved as dtm_ordinary_kriging.tiff")
+    print("\n DTM saved as dtm_ordinary_kriging.tiff")
     print(" Shape of the DTM: ", dtm.shape)
     print(">> Ordinary Kriging interpolation complete.\n")
 

@@ -12,7 +12,6 @@ import laspy
 
 import argparse
 
-
 # LIBRARIES FOR TESTING
 import logging # testing output
 import matplotlib.pyplot as plt # testing output
@@ -126,8 +125,8 @@ def knn_outlier_removal(thinned_pointcloud, k):
 
     # Compute the distances to the k-th nearest neighbor
     distances, _ = tree.query(thinned_pointcloud[:, :2], k=k + 1)  # k+1 because the point itself is included
-    knn_distances = distances[:, k]  # We take the k-th nearest distance
-
+    knn_distances = distances[:, k] 
+    
     # Define threshold for outlier detection
     threshold = np.mean(knn_distances) + 2 * np.std(knn_distances)
 
@@ -141,6 +140,7 @@ def knn_outlier_removal(thinned_pointcloud, k):
 def neighbors(grid_x, grid_y):
     edge_list = []
     rows, cols = grid_x.shape
+    # Iterate over the grid points and create edges
     for row in range(rows):
         for col in range(cols):
             idx = row * cols + col  # Convert 2D index to 1D index
@@ -148,6 +148,7 @@ def neighbors(grid_x, grid_y):
                 edge_list.append((idx, idx + 1))
             if row < rows - 1:  # Vertical edge
                 edge_list.append((idx, idx + cols))
+                
     return edge_list
         
 ## Function to run the Cloth Simulation Filter algorithm 
@@ -186,7 +187,7 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
     print(" Cloth initialized.")
     
     # Initiliaze movement of the cloth
-    mobility = np.ones(grid_points.shape[0], dtype=bool)
+    mobility = np.ones(grid_points.shape[0], dtype=bool) 
     update = np.inf
     
     # Start the simulation
@@ -197,12 +198,12 @@ def cloth_simulation_filter(thinned_pointcloud, csf_res, epsilon, minx, maxx, mi
             Ccurrent[keep_going] -= 0.1  # gravity effect
 
             for e0, e1 in edge:
-                if mobility[e0] or mobility[e1]:
+                if mobility[e0] or mobility[e1]: # If at least one of the vertices is mobile
                     ze0, ze1 = Ccurrent[e0], Ccurrent[e1]
                     average = (ze0 + ze1) / 2
-                    if mobility[e0]:
+                    if mobility[e0]: # If one of the vertices is mobile
                         Ccurrent[e0] = average
-                    if mobility[e1]:
+                    if mobility[e1]: # If the other vertex is mobile
                         Ccurrent[e1] = average
             
             not_moving = Ccurrent < Cmin
@@ -526,7 +527,7 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
 
     # Save the DTM to a TIFF file
     transform = from_origin(minx, maxy, resolution, -resolution)  
-    with rasterio.open('dtm_laplace.tiff', 'w', driver='GTiff',
+    with rasterio.open('dtm.tiff', 'w', driver='GTiff',
                        height=dtm.shape[0], width=dtm.shape[1],
                        count=1, dtype=str(dtm.dtype), crs='EPSG:28992', # Dutch National Grid (Amersfoort / RD New)
                        transform=transform) as dst:
@@ -546,6 +547,7 @@ def interpolate_z_value(dt, x, y, hull):
     if dt.is_finite(triangle):
         vertices = [dt.get_point(idx) for idx in triangle]
         return weighted_barycentric_interpolate(x, y, vertices, hull)
+    
     return np.nan
 
 ## (USED in interpolate_z_value) Function to interpolate the z value using barycentric coordinates
@@ -622,14 +624,14 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     print("DTM created and saved as dtm_laplace.tiff.")
 
     # ADDITIONAL: Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
-    jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
-    print(">> Jackknife RMSE computed.\n")
+    #jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    #print(f"Jackknife RMSE of Laplace interpolation: {jackknife_error}")
+    #print(">> Jackknife RMSE computed.\n")
 
     # ADDITIONAL: Visualize the filtered DTM
-    visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    print(" Shape of the DTM: ", dtm.shape)
-    print(">> Laplace interpolation complete.\n")
+    #visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    #print(" Shape of the DTM: ", dtm.shape)
+    #print(">> Laplace interpolation complete.\n")
 
     # 5. Save the ground points in a file called ground.laz
     save_ground_points_las(ground_points)
