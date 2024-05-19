@@ -21,7 +21,6 @@ from mpl_toolkits.mplot3d import Axes3D # testing output
 from tqdm import tqdm # Loading bar
 from sklearn.metrics import mean_squared_error # testing output
 
-
 '''
 INPUTS:
 name	    step1.py
@@ -506,66 +505,61 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     y_coords = np.arange(miny, maxy, resolution)
     grid_x, grid_y = np.meshgrid(x_coords, y_coords)
     dtm = np.full(grid_x.shape, np.nan)
+    
     # Perform Delaunay triangulation using startinpy
     print(" Performing Delaunay triangulation...")
     triangulation = startinpy.DT()
     for pt in ground_points:
         triangulation.insert_one_pt(pt[0], pt[1], pt[2])
 
-    # Build a k-d tree for fast point-in-hull check
-    hull_points = ground_points[:, :2]
-    hull = ConvexHull(hull_points)
-    kdtree = cKDTree(hull_points)
-
     # Adding progress bar
     total_points = grid_x.shape[0] * grid_x.shape[1]
-    progress_bar = tqdm(total=total_points, desc="Interpolating DTM")
+    progress_bar = tqdm(total=total_points, desc=" Interpolating DTM")
 
     insufficient_neighbors_count = 0
     for i in range(grid_x.shape[0]):
         for j in range(grid_x.shape[1]):
             point = [grid_x[i, j], grid_y[i, j]]
-            if not point_in_hull(point, hull):
+            if not triangulation.is_inside_convex_hull(point[0], point[1]):
                 continue  # Skip points outside the convex hull
-
-            # Use k-d tree to find the closest point and its neighbors
-            dist, idx = kdtree.query(point, k=1)
-            closest_idx = idx
+            closest_idx = triangulation.closest_point(point[0], point[1])
             neighbors = triangulation.adjacent_vertices_to_vertex(closest_idx)
             neighbors = neighbors[neighbors != 0]  # Exclude the infinite vertex
-
             if len(neighbors) < 3:  # If not enough neighbors, skip this point
                 insufficient_neighbors_count += 1
                 continue
-
-            neighbor_points = triangulation.points[neighbors]
+            neighbor_points = np.array([triangulation.get_point(v) for v in neighbors])
             if len(neighbor_points) == 0:
                 continue
-
-            # Compute Voronoi weights for the neighbors of the current point
+            # Compute circumcenters
+            circumcenters = []
+            for k in range(len(neighbors)):
+                triangle = [closest_idx, neighbors[k], neighbors[k-1]]
+                circumcenters.append(circum_circle(triangulation, triangle))
+            circumcenters = np.array(circumcenters)
+            # Compute Voronoi weights
             weights = np.zeros(len(neighbor_points))
             total_weight = 0
             for k in range(len(neighbor_points)):
-                voronoi_edge_length = compute_voronoi_edge_length(triangulation, neighbors[k])
+                voronoi_edge_length = point_dist(circumcenters[k], circumcenters[k-1])
                 delaunay_edge_length = point_dist(neighbor_points[k, :2], point)
                 if delaunay_edge_length != 0:
                     weights[k] = voronoi_edge_length / delaunay_edge_length
                     total_weight += weights[k]
+            # Normalize the weights
             if total_weight > 0:
                 weights /= total_weight
             else:
+                insufficient_neighbors_count += 1
                 continue
-
             # Perform interpolation using the weights
             z_value = np.dot(weights, neighbor_points[:, 2])
             dtm[i, j] = z_value
-
-            progress_bar.update(1)  # Update the progress bar
-
-    progress_bar.close()  # Close the progress bar when done
-    print(f"Number of NaNs in the DTM: {np.isnan(dtm).sum()}")
-    print(f"Number of points with insufficient neighbors: {insufficient_neighbors_count}")
-
+            progress_bar.update(1)
+    progress_bar.close()
+    print(f" Number of NaNs in the DTM: {np.isnan(dtm).sum()}")
+    print(f" Number of points with insufficient neighbors: {insufficient_neighbors_count}")
+    
     # Save the DTM to a TIFF file
     transform = from_origin(minx, maxy, resolution, -resolution)  
     with rasterio.open('dtm.tiff', 'w', driver='GTiff',
@@ -576,18 +570,13 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     
     return dtm
 
-## (USED in Laplace) Check if a point is inside the convex hull
-def point_in_hull(point, hull):
-    return all((np.dot(eq[:-1], point) + eq[-1]) <= 1e-12 for eq in hull.equations)
-
 ## (USED in Laplace) Calculates the circumcircle center for a given triangle, which is used to determine Voronoi edge lengths
 def circum_circle(triangulation, triangle):
-    pts = triangulation.points[triangle]
+    pts = np.array([triangulation.get_point(v) for v in triangle])
     A = pts[0]
     B = pts[1]
     C = pts[2]
     D = 2 * (A[0] * (B[1] - C[1]) + B[0] * (C[1] - A[1]) + C[0] * (A[1] - B[1]))
-    # Calculate circumcenter coordinates
     Ux = ((A[0]**2 + A[1]**2) * (B[1] - C[1]) + (B[0]**2 + B[1]**2) * (C[1] - A[1]) + (C[0]**2 + C[1]**2) * (A[1] - B[1])) / D
     Uy = ((A[0]**2 + A[1]**2) * (C[0] - B[0]) + (B[0]**2 + B[1]**2) * (A[0] - C[0]) + (C[0]**2 + C[1]**2) * (B[0] - A[0])) / D
     return np.array([Ux, Uy])
@@ -595,39 +584,6 @@ def circum_circle(triangulation, triangle):
 ## (USED in Laplace) Calculate the Euclidean distance between two points
 def point_dist(p1, p2):
     return np.linalg.norm(p1 - p2)
-
-## (USED in Laplace) Compute the length of the Voronoi edge for a given point
-def compute_voronoi_edge_length(triangulation, vertex_index):
-    neighbors = triangulation.adjacent_vertices_to_vertex(vertex_index)
-    total_length = 0
-    for i in range(len(neighbors) - 1):
-        edge_length = point_dist(triangulation.points[neighbors[i], :2], triangulation.points[neighbors[i+1], :2])
-        total_length += edge_length
-    return total_length / len(neighbors)
-
-
-def startinpy_laplace(ground_points, minx, maxx, miny, maxy, resolution):
-    dt = startinpy.DT()
-    for pt in ground_points:
-        dt.insert_one_pt(pt[0], pt[1], pt[2])
-    x_coords = np.arange(minx, maxx, resolution)
-    y_coords = np.arange(miny, maxy, resolution)
-    grid_x, grid_y = np.meshgrid(x_coords, y_coords)
-    locations = np.vstack([grid_x.ravel(), grid_y.ravel()]).T
-
-    interpolated_values = dt.interpolate({"method": "Laplace"}, locations, strict=False)
-    dtm_startinpy = interpolated_values.reshape(grid_x.shape)
-     # Visualization
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    surf = ax.plot_surface(grid_x, grid_y, dtm_startinpy, cmap='terrain', edgecolor='none')
-    fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Elevation')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Elevation')
-    ax.set_title('Digital Terrain Model (DTM) Interpolated with startinpy Laplace')
-    plt.show()
-    return dtm_startinpy
 
 ## -------------------- Main function --------------------
 def main():
@@ -662,24 +618,18 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     #print(">> Testing ground and non-ground points complete.\n")
     
     # ADDITIONAL: Remove stubborn outliers with TIN
-    print("Removing stubborn outliers with TIN...")
-    ground_points = remove_outliers_with_tin(ground_points)
+    #print("Removing stubborn outliers with TIN...")
+    #ground_points = remove_outliers_with_tin(ground_points)
 
      #------ Step 2: Laplace Interpolation ------
     if ground_points.size == 0:
         print("No valid ground points found. Exiting program...")
         return    
     
-    
-    # Startinpy Laplace interpolation
-    #print("Starting Laplace interpolation with startinpy...")
-    #dtm_startinpy = startinpy_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    #print(">> Laplace interpolation with startinpy complete.\n")
-
     # 4. Laplace
     print("Starting Laplace interpolation...")
     dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    print("DTM created and saved as dtm_laplace.tiff.")
+    print(" DTM created and saved as dtm_laplace.tiff.")
 
     # ADDITIONAL: Jackknife RMSE (computes Laplace again for each point and calculates RMSE)
     #jackknife_error = jackknife_rmse_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
