@@ -8,6 +8,8 @@ import rasterio
 from rasterio.transform import from_origin
 from scipy.spatial import cKDTree
 from scipy.spatial import ConvexHull
+from scipy.spatial import Voronoi
+
 import laspy
 
 import argparse
@@ -104,10 +106,10 @@ def thin_pc(pointcloud, keep_percentage):
     print(f" Number of points before thinning: {len(pointcloud)}")
     print(f" Number of points after thinning: {len(thinned_pointcloud)}")
     
-    # Save thinned point cloud as LAZ file  
+    # Save thinned point cloud to a new LAS file  
     header = laspy.LasHeader(version="1.4", point_format=2)
     las = laspy.LasData(header)
-    # Assign thinned points to the LAS file
+    # Assign thinned points to the LAS
     las.x = thinned_pointcloud[:, 0]
     las.y = thinned_pointcloud[:, 1]
     las.z = thinned_pointcloud[:, 2]
@@ -499,31 +501,70 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     dt = startinpy.DT()
     for pt in ground_points:
         dt.insert_one_pt(pt[0], pt[1], pt[2])
-    
     # Preparing grid for interpolation
-    x_steps = int((maxx - minx) / resolution) + 1 # Number of steps needed in x direction
-    y_steps = int((maxy - miny) / resolution) + 1 # Number of steps needed in y direction
+    x_coords = np.arange(minx, maxx, resolution)
+    y_coords = np.arange(miny, maxy, resolution)
+    grid_x, grid_y = np.meshgrid(x_coords, y_coords)
+    dtm = np.full(grid_x.shape, np.nan)
+    # Perform Delaunay triangulation using startinpy
+    print(" Performing Delaunay triangulation...")
+    triangulation = startinpy.DT()
+    for pt in ground_points:
+        triangulation.insert_one_pt(pt[0], pt[1], pt[2])
 
-    x_coords = np.arange(minx, maxx + 0.5 * resolution, resolution)[:x_steps]
-    y_coords = np.arange(miny, maxy + 0.5 * resolution, resolution)[:y_steps]
+    # Build a k-d tree for fast point-in-hull check
+    hull_points = ground_points[:, :2]
+    hull = ConvexHull(hull_points)
+    kdtree = cKDTree(hull_points)
 
-    dtm = np.full((len(y_coords), len(x_coords)), np.nan)  # Initialize DTM with NaN values
+    # Adding progress bar
+    total_points = grid_x.shape[0] * grid_x.shape[1]
+    progress_bar = tqdm(total=total_points, desc="Interpolating DTM")
 
-    # Build convex hull (2D) for the ground points and interpolate the z values
-    hull = ConvexHull(ground_points[:, :2])
-    print(" Creating the convex hull (2D) for the ground points to interpolate...")
-    # Boundary of the las VS the boundary of the convex hull
-    print(" Boundary of the las file: ", minx, maxx, miny, maxy)
-    print(" Boundary of the convex hull: ", hull.min_bound, hull.max_bound)
-    print("\n")
+    insufficient_neighbors_count = 0
+    for i in range(grid_x.shape[0]):
+        for j in range(grid_x.shape[1]):
+            point = [grid_x[i, j], grid_y[i, j]]
+            if not point_in_hull(point, hull):
+                continue  # Skip points outside the convex hull
 
-    # Interpolate the z values for each point in the grid
-    for j, y in enumerate(y_coords):
-        for i, x in enumerate(x_coords):
-            if point_in_hull((x, y), hull):
-                dtm[j, i] = interpolate_z_value(dt, x, y, hull) # Interpolate the z value
+            # Use k-d tree to find the closest point and its neighbors
+            dist, idx = kdtree.query(point, k=1)
+            closest_idx = idx
+            neighbors = triangulation.adjacent_vertices_to_vertex(closest_idx)
+            neighbors = neighbors[neighbors != 0]  # Exclude the infinite vertex
+
+            if len(neighbors) < 3:  # If not enough neighbors, skip this point
+                insufficient_neighbors_count += 1
+                continue
+
+            neighbor_points = triangulation.points[neighbors]
+            if len(neighbor_points) == 0:
+                continue
+
+            # Compute Voronoi weights for the neighbors of the current point
+            weights = np.zeros(len(neighbor_points))
+            total_weight = 0
+            for k in range(len(neighbor_points)):
+                voronoi_edge_length = compute_voronoi_edge_length(triangulation, neighbors[k])
+                delaunay_edge_length = point_dist(neighbor_points[k, :2], point)
+                if delaunay_edge_length != 0:
+                    weights[k] = voronoi_edge_length / delaunay_edge_length
+                    total_weight += weights[k]
+            if total_weight > 0:
+                weights /= total_weight
             else:
-                dtm[j, i] = np.nan  # Points outside the convex hull do NOT get interpolated (assigned NaN)
+                continue
+
+            # Perform interpolation using the weights
+            z_value = np.dot(weights, neighbor_points[:, 2])
+            dtm[i, j] = z_value
+
+            progress_bar.update(1)  # Update the progress bar
+
+    progress_bar.close()  # Close the progress bar when done
+    print(f"Number of NaNs in the DTM: {np.isnan(dtm).sum()}")
+    print(f"Number of points with insufficient neighbors: {insufficient_neighbors_count}")
 
     # Save the DTM to a TIFF file
     transform = from_origin(minx, maxy, resolution, -resolution)  
@@ -535,48 +576,58 @@ def laplace_interpolation(ground_points, minx, maxx, miny, maxy, resolution):
     
     return dtm
 
-## (USED in Laplace) Function to check if a point is inside the convex hull
+## (USED in Laplace) Check if a point is inside the convex hull
 def point_in_hull(point, hull):
-    return all((np.dot(eq[:-1], point) + eq[-1] <= 1e-12) for eq in hull.equations)
+    return all((np.dot(eq[:-1], point) + eq[-1]) <= 1e-12 for eq in hull.equations)
 
-## (USED in Laplace) Function to interpolate the z value at a specific point using barycentric coordinates
-def interpolate_z_value(dt, x, y, hull):
-    if not dt.is_inside_convex_hull(x, y):
-        return np.nan  # Outside the convex hull
-    triangle = dt.locate(x, y)
-    if dt.is_finite(triangle):
-        vertices = [dt.get_point(idx) for idx in triangle]
-        return weighted_barycentric_interpolate(x, y, vertices, hull)
-    
-    return np.nan
+## (USED in Laplace) Calculates the circumcircle center for a given triangle, which is used to determine Voronoi edge lengths
+def circum_circle(triangulation, triangle):
+    pts = triangulation.points[triangle]
+    A = pts[0]
+    B = pts[1]
+    C = pts[2]
+    D = 2 * (A[0] * (B[1] - C[1]) + B[0] * (C[1] - A[1]) + C[0] * (A[1] - B[1]))
+    # Calculate circumcenter coordinates
+    Ux = ((A[0]**2 + A[1]**2) * (B[1] - C[1]) + (B[0]**2 + B[1]**2) * (C[1] - A[1]) + (C[0]**2 + C[1]**2) * (A[1] - B[1])) / D
+    Uy = ((A[0]**2 + A[1]**2) * (C[0] - B[0]) + (B[0]**2 + B[1]**2) * (A[0] - C[0]) + (C[0]**2 + C[1]**2) * (B[0] - A[0])) / D
+    return np.array([Ux, Uy])
 
-## (USED in interpolate_z_value) Function to interpolate the z value using barycentric coordinates
-def weighted_barycentric_interpolate(x, y, vertices, hull):
-    x1, y1, z1 = vertices[0]
-    x2, y2, z2 = vertices[1]
-    x3, y3, z3 = vertices[2]
+## (USED in Laplace) Calculate the Euclidean distance between two points
+def point_dist(p1, p2):
+    return np.linalg.norm(p1 - p2)
 
-    # Calculate distances from the point to each vertex
-    safety = 1e-10  # veryyyyy small number to prevent division by zero
-    distances = np.array([np.sqrt((x - vx)**2 + (y - vy)**2) + safety for vx, vy, _ in vertices])
-  
-    # Calculate weights inversely proportional to distances
-    weights = 1 / distances
+## (USED in Laplace) Compute the length of the Voronoi edge for a given point
+def compute_voronoi_edge_length(triangulation, vertex_index):
+    neighbors = triangulation.adjacent_vertices_to_vertex(vertex_index)
+    total_length = 0
+    for i in range(len(neighbors) - 1):
+        edge_length = point_dist(triangulation.points[neighbors[i], :2], triangulation.points[neighbors[i+1], :2])
+        total_length += edge_length
+    return total_length / len(neighbors)
 
-    # If the point is near the edge of the convex hull, reduce the influence of vertices
-    if any(np.dot(eq[:-1], (x, y)) + eq[-1] > 0 for eq in hull.equations):
-        weights *= 0.5
-    
-    # Normalize weights
-    total_weight = np.sum(weights)
-    if total_weight == 0:
-        weights = np.ones_like(weights) / len(weights)  # distribute evenly if total weight is zero
-    else:
-        weights /= total_weight
 
-    # Calculate weighted Z using normalized weights
-    z = weights[0] * z1 + weights[1] * z2 + weights[2] * z3
-    return z
+def startinpy_laplace(ground_points, minx, maxx, miny, maxy, resolution):
+    dt = startinpy.DT()
+    for pt in ground_points:
+        dt.insert_one_pt(pt[0], pt[1], pt[2])
+    x_coords = np.arange(minx, maxx, resolution)
+    y_coords = np.arange(miny, maxy, resolution)
+    grid_x, grid_y = np.meshgrid(x_coords, y_coords)
+    locations = np.vstack([grid_x.ravel(), grid_y.ravel()]).T
+
+    interpolated_values = dt.interpolate({"method": "Laplace"}, locations, strict=False)
+    dtm_startinpy = interpolated_values.reshape(grid_x.shape)
+     # Visualization
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    surf = ax.plot_surface(grid_x, grid_y, dtm_startinpy, cmap='terrain', edgecolor='none')
+    fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Elevation')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Elevation')
+    ax.set_title('Digital Terrain Model (DTM) Interpolated with startinpy Laplace')
+    plt.show()
+    return dtm_startinpy
 
 ## -------------------- Main function --------------------
 def main():
@@ -618,6 +669,13 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     if ground_points.size == 0:
         print("No valid ground points found. Exiting program...")
         return    
+    
+    
+    # Startinpy Laplace interpolation
+    #print("Starting Laplace interpolation with startinpy...")
+    #dtm_startinpy = startinpy_laplace(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    #print(">> Laplace interpolation with startinpy complete.\n")
+
     # 4. Laplace
     print("Starting Laplace interpolation...")
     dtm = laplace_interpolation(ground_points, args.minx, args.maxx, args.miny, args.maxy, args.res)
@@ -629,9 +687,9 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     #print(">> Jackknife RMSE computed.\n")
 
     # ADDITIONAL: Visualize the filtered DTM
-    #visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
-    #print(" Shape of the DTM: ", dtm.shape)
-    #print(">> Laplace interpolation complete.\n")
+    visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    print(" Shape of the DTM: ", dtm.shape)
+    print(">> Laplace interpolation complete.\n")
 
     # 5. Save the ground points in a file called ground.laz
     save_ground_points_las(ground_points)
