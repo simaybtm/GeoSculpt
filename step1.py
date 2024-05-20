@@ -65,7 +65,7 @@ def read_las(file_path, min_x, max_x, min_y, max_y):
             # Filter points within the specified bounding box
             mask = (las.x >= min_x) & (las.x <= max_x) & (las.y >= min_y) & (las.y <= max_y)
             filtered_points = np.column_stack((las.x[mask], las.y[mask], las.z[mask]))
-            print(f"Number of points after applying bounding box filter: {filtered_points.shape[0]}")
+            print(f" Number of points after applying bounding box filter: {filtered_points.shape[0]}")
             return filtered_points
 
     except FileNotFoundError:
@@ -106,14 +106,14 @@ def thin_pc(pointcloud, keep_percentage):
     print(f" Number of points after thinning: {len(thinned_pointcloud)}")
     
     # Save thinned point cloud to a new LAS file  
-    header = laspy.LasHeader(version="1.4", point_format=2)
-    las = laspy.LasData(header)
+    #header = laspy.LasHeader(version="1.4", point_format=2)
+    #las = laspy.LasData(header)
     # Assign thinned points to the LAS
-    las.x = thinned_pointcloud[:, 0]
-    las.y = thinned_pointcloud[:, 1]
-    las.z = thinned_pointcloud[:, 2]
+    #las.x = thinned_pointcloud[:, 0]
+    #las.y = thinned_pointcloud[:, 1]
+    #las.z = thinned_pointcloud[:, 2]
     # Write the LAS file to disk
-    las.write('thinned.laz')
+    #las.write('thinned.laz')
     
     return thinned_pointcloud
 
@@ -428,7 +428,7 @@ def remove_outliers_with_tin(points):
     return cleaned_points
 
 ### --------------- Step 2: Laplace Interpolation ---------------
-## Function to compute the Jackknife RMSE for Laplace interpolation
+## (TESTING) Function to compute the Jackknife RMSE for Laplace interpolation
 def jackknife_rmse_laplace(ground_points, minx, maxx, miny, maxy, resolution):
     """
     Compute the Jackknife RMSE for Laplace interpolation.
@@ -637,7 +637,8 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     #print(">> Jackknife RMSE computed.\n")
 
     # ADDITIONAL: Visualize the filtered DTM
-    visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    #visualize_laplace(dtm, args.minx, args.maxx, args.miny, args.maxy, args.res)
+    
     print(" Shape of the DTM: ", dtm.shape)
     print(">> Laplace interpolation complete.\n")
 

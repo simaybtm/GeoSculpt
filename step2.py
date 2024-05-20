@@ -47,7 +47,7 @@ parser.add_argument('epsilon', type=float, help='Threshold in meters to classify
 args = parser.parse_args()
 
 ### Step 1: Ground filtering with Cloth Simulation Filter (CSF)
-## Functions used from step1.py
+## Functions used in step1.py
 
 ### Step 2: Ordinary Kriging
 ## (USED in OK) Function to check if Ordinary Kriging is working correctly (visualize with matplotlib)
@@ -111,7 +111,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     print(" Calculating the experimental semivariogram using test set...")
     try:
         exp_variogram = build_experimental_variogram(input_array=train_set, step_size=search_radius, max_range=max(max_range))
-        exp_variogram.plot()
+        #exp_variogram.plot()
         print(" Experimental variogram calculated using the training set.\n")
         print ("EXPERIMENTAL MODEL\n",exp_variogram)
     except MemoryError as e:
@@ -141,7 +141,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
                                           nugget=0)  
     print("\nTheoretical semivariogram model fitted.")
     print("\nTHEORETICAL MODEL\n",semivar)
-    semivar.plot()
+    #semivar.plot()
     
     # Preparing grid for interpolation
     x_steps = int((maxx - minx) / resolution) + 1 # Number of steps needed in x direction
@@ -187,7 +187,7 @@ def ordinary_kriging_interpolation(ground_points, resolution, minx, maxx, miny, 
     
     return dtm
 
-## Function to compute Jackknife RMSE for Ordinary Kriging    
+## (TESTING) Function to compute Jackknife RMSE for Ordinary Kriging    
 def jackknife_rmse_ok(ground_points, resolution, minx, maxx, miny, maxy, sample_size=1000, thinning_factor=10, search_radius_factor=1, max_range_factor=2, no_neighbors=8):
     if len(ground_points) > sample_size:
         # Randomly sample points if the dataset is larger than the sample size
@@ -248,8 +248,8 @@ maxy={args.maxy}, res={args.res}, csf_res={args.csf_res}, epsilon={args.epsilon}
     #print(">> Testing ground and non-ground points complete.\n")
     
     # ADDITIONAL: Remove stubborn outliers with TIN
-    print("Removing stubborn outliers with TIN...")
-    ground_points = remove_outliers_with_tin(ground_points)
+    #print("Removing stubborn outliers with TIN...")
+    #ground_points = remove_outliers_with_tin(ground_points)
     
     #------ Step 2: Ordinary Kriging ------
     # Cheat here if you already ran step1.py and have the ground points saved in a file ("ground.laz")
