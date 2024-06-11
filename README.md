@@ -1,4 +1,4 @@
-# GeoSculpt: Terrain data
+# GeoSculpt
 
 ## Point Clouds, DTMs, and Visualisation
 
